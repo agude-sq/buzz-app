@@ -1,6 +1,7 @@
 import {
   readComposerSnapshot,
   composerMarkdownContext,
+  projectComposerDocument,
 } from "../messages/composer-document";
 import type { ComposerSnapshot } from "../messages/mention-draft";
 import { scanMarkdown } from "../relay/message-content";
@@ -196,6 +197,12 @@ export function ComposerCompletions({
     return () => document.removeEventListener("pointermove", record);
   }, [input]);
   const observation = editor.observation;
+  const document = readComposerSnapshot(resolved.document);
+  if (context.draft && observation)
+    context = {
+      ...context,
+      draft: { ...context.draft, revision: observation.revision },
+    };
   // Stale chip ranges cannot classify this caret.
   const match =
     observation &&
@@ -203,6 +210,9 @@ export function ComposerCompletions({
     matchCompletion(providers, observation, context, [
       ...resolved.recipients,
       ...(resolved.pending ?? []),
+      ...(document
+        ? (projectComposerDocument(document).draft.tokens ?? [])
+        : []),
     ]);
   const open =
     !!match &&
