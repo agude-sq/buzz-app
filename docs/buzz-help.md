@@ -331,9 +331,10 @@ available rather than silently discarding it.
   there, and fail until there is one, or while Codex's sign-in is for another
   workspace; once signed in elsewhere, use Codex's **Sign in again**. API key
   and keyring sign-ins can't run them.
-- **Settings → Agent details → Config history** expands saved revisions for
+- **Settings → Agent details → Previous versions** expands saved revisions for
   agents whose configuration syncs here. Settings and instructions have separate
-  histories; **Show changes** compares revisions and **Load older** fetches more.
+  histories, kept automatically when changes are saved. **Show changes** compares
+  versions and **Load older** fetches more.
   Reverting one track saves a new revision without changing the other track.
 - **Activity**, where the agent type provides it, shows sessions and their
   transcripts in the agent's profile. A turn's **Thread** or **Channel** label
