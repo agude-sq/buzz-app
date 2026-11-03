@@ -6,6 +6,8 @@ import {
 } from "../../shared/view-state";
 import type { UploadedAttachment } from "../relay/attachments";
 import type { MentionPicks } from "../relay/messages";
+import type { ComposerToken } from "../conversation/contracts";
+import { taskTokenTags } from "./task-tokens";
 
 export type FollowUpMessage = {
   channelId: string;
@@ -14,6 +16,7 @@ export type FollowUpMessage = {
   attachments: readonly UploadedAttachment[];
   references: readonly string[];
   picks: MentionPicks;
+  taskTokens?: readonly ComposerToken[];
 };
 export type SavedFollowUp = FollowUpMessage & {
   id: string;
@@ -185,6 +188,14 @@ function strings(value: unknown): value is string[] {
 function valid(value: unknown): value is SavedFollowUp {
   if (!value || typeof value !== "object") return false;
   const v = value as SavedFollowUp;
+  try {
+    if (v.taskTokens !== undefined) {
+      if (!Array.isArray(v.taskTokens)) return false;
+      taskTokenTags(v.taskTokens);
+    }
+  } catch {
+    return false;
+  }
   return (
     typeof v.id === "string" &&
     typeof v.channelId === "string" &&

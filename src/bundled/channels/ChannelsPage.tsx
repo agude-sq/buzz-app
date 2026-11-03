@@ -2056,9 +2056,11 @@ function ChannelWorkspace({
                 draft.project,
                 draft.agent,
                 draft.linked,
+                draft.task,
                 retiredSoloDraft.generation,
               ])}
               linkedId={draft.linked}
+              task={draft.task}
               source={linkedSource}
               focusRequest={
                 navigation?.focus === "preserve" ||

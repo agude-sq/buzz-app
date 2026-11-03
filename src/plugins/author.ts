@@ -56,6 +56,7 @@ export type {
   ComposerAccessory,
   ComposerAccessoryProps,
   ComposerResource,
+  ComposerToken,
   ComposerCaptureProps,
   AttachmentRenderer,
   AttachmentRendererProps,
@@ -177,6 +178,13 @@ export type {
   SoloConversationLinkProps,
   SoloCardProps,
   SoloDisclosureProps,
+  TaskDraft,
+  TaskPrepareResult,
+  ParticipantPolicy,
+  SoloTaskMode,
+  TaskDraftTokenControls,
+  TaskHeaderTitleProps,
+  TaskHeaderUI,
 } from "../features/channel-navigation/solo-navigation-contract";
 
 export type {

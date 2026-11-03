@@ -330,6 +330,47 @@ it("restores ordered payloads in the same account/community without automaticall
   ).toEqual(["Second"]);
 });
 
+it("restores captured task tokens and passes them unchanged to the recovered send", async () => {
+  const token = {
+    kind: "nexus.skill" as const,
+    id: "/exact/SKILL.md",
+    label: "/review",
+    target: agent,
+  };
+  fixture().enqueue({ ...message, taskTokens: [token] });
+  const restored = fixture();
+  await restored.owner.ready;
+  const row = restored.queue.snapshot()[0];
+  expect(row?.message?.taskTokens).toEqual([token]);
+  if (!row) throw new Error("Queued message was not restored");
+  restored.queue.sendNow(row.id);
+  await vi.waitFor(() => expect(restored.send).toHaveBeenCalledOnce());
+  expect(restored.send.mock.calls[0]?.[7]).toEqual([token]);
+});
+
+it.each([
+  {},
+  [{ kind: "unknown", id: "broken", label: "Broken" }],
+  Array(33).fill({ kind: "nexus.project", id: "project", label: "Project" }),
+])(
+  "keeps saved messages with invalid or oversized task tokens for recovery: %j",
+  (taskTokens) => {
+    const storage = followUpStorage(scope);
+    storage.save({
+      ...message,
+      id: "invalid-tokens",
+      createdAt: 1,
+      taskTokens: taskTokens as unknown as NonNullable<
+        FollowUpMessage["taskTokens"]
+      >,
+    });
+    const key = `buzz-view.v1:${JSON.stringify([scope, "follow-up:invalid-tokens"])}`;
+    const saved = localStorage.getItem(key);
+    expect(() => storage.load()).toThrow("could not be read");
+    expect(localStorage.getItem(key)).toBe(saved);
+  },
+);
+
 it("refuses enqueue on save failure and leaves no in-memory-only queued row", () => {
   const h = fixture();
   vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
