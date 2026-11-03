@@ -166,6 +166,8 @@ export type {
 
 export type {
   SoloNavigation,
+  SoloWorkspaces,
+  SoloWorkspaceSnapshot,
   SoloRegionBinding,
   SoloRegionSnapshot,
   SoloRegionAction,
