@@ -3899,7 +3899,10 @@ it.each([
         try {
           await userEvent.click(
             screen.getByRole("button", {
-              name: `${mode === "toolbar same explicit" ? "Member" : "Outside"} agent ${mode === "toolbar same explicit" ? a : b}`,
+              name:
+                mode === "toolbar same explicit"
+                  ? /^Member agent\s*Agent$/
+                  : /^Outside agent\s*Agent$/,
             }),
           );
         } finally {
@@ -3932,7 +3935,7 @@ it.each([
           }),
         );
         await userEvent.click(
-          screen.getByRole("button", { name: `Member agent ${a}` }),
+          screen.getByRole("button", { name: /^Member agent\s*Agent$/ }),
         );
         expect(input.value).toBe(before);
         expect(readView(scope, `${key}:identity`, null)).toMatchObject({
@@ -4383,7 +4386,7 @@ it.each(["selected", "refused", "typed later"] as const)(
           });
       }
       await userEvent.click(
-        screen.getByRole("button", { name: `Outside agent ${b}` }),
+        screen.getByRole("button", { name: /^Outside agent\s*Agent$/ }),
       );
       failure?.mockRestore();
       failure = undefined;

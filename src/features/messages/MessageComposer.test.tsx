@@ -12184,9 +12184,7 @@ it("shows the bound task's effective recipient in the existing mention toolbar",
   expect(h.input()).toHaveValue("Plain task message");
   expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
   await h.user.click(trigger());
-  await h.user.click(
-    screen.getByRole("button", { name: `Bea ${second.pubkey}` }),
-  );
+  await h.user.click(screen.getByRole("button", { name: /^Bea\s*Agent$/ }));
   expect(
     screen.getByRole("button", {
       name: "Mention a member, current recipient Bea",
