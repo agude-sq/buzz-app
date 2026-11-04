@@ -461,6 +461,13 @@ it.each(["shortcut", "row"])(
     fireEvent.click(first);
     await waitFor(() => expect(h.archive.current).toBeDefined());
     const [tab] = sideTabs();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("list", { name: "Inbox conversations" }),
+      ).toHaveAttribute("aria-busy", "false"),
+    );
+    await Promise.all(h.readSteps.map((step) => step.work));
+    const readSteps = h.readSteps.length;
     // Leaving Inbox and returning restores the tab with its row's selection.
     view.unmount();
     render(h.view);
@@ -472,6 +479,8 @@ it.each(["shortcut", "row"])(
       if (!row) throw new Error("No selected row");
       return row;
     });
+    // Restoring the presentation must not replay the row's read command.
+    expect(h.readSteps).toHaveLength(readSteps);
     if (from === "shortcut") await archiveOpened(h);
     else
       fireEvent.click(
@@ -2326,6 +2335,157 @@ it("a shortcut open leaves the Drafts view", async () => {
   ).toBeVisible();
 });
 
+it("a route open applies its status and sender, keeping the other saved filters", async () => {
+  const h = fixture({ withDm: true });
+  localStorage.setItem(
+    `buzz-view.v1:${JSON.stringify([h.owner.session.scope, "inbox:filters"])}`,
+    JSON.stringify({
+      show: "inbox",
+      activity: "threads",
+      sender: "everyone",
+      attention: "unread",
+    }),
+  );
+  render(viewAt(h, visit({ show: "archived", sender: "agents" })));
+  await waitFor(() => expect(filterSummary()).toHaveTextContent("Archived"));
+  expect(filterSummary()).toHaveTextContent("Agents");
+  expect(savedFilters(h)).toEqual({
+    show: "archived",
+    activity: "threads",
+    sender: "agents",
+    attention: "unread",
+  });
+});
+
+it("a route that changes Inbox and Archived ends the selection, as the menu does", async () => {
+  const h = fixture();
+  const view = render(viewAt(h, visit()));
+  const list = () =>
+    within(screen.getByRole("list", { name: "Inbox conversations" }));
+  await waitFor(() =>
+    expect(list().getAllByRole("button", { name: /^Open / })).toHaveLength(2),
+  );
+  const [first] = list().getAllByRole("button", { name: /^Open / });
+  if (!first) throw new Error("Missing fixture row");
+  fireEvent.click(first);
+  await waitFor(() => expect(h.archive.current).toBeDefined());
+  view.rerender(viewAt(h, visit({ show: "archived" })));
+  await waitFor(() => expect(filterSummary()).toHaveTextContent("Archived"));
+  // The hidden Inbox conversation is no longer the Archive shortcut's target.
+  await waitFor(() => expect(h.archive.current).toBeUndefined());
+});
+
+it("a drafts route opens Drafts and leaves saved filters alone", async () => {
+  const h = fixture();
+  const saved = {
+    show: "archived",
+    activity: "dms",
+    sender: "humans",
+    attention: "unread",
+  };
+  localStorage.setItem(
+    `buzz-view.v1:${JSON.stringify([h.owner.session.scope, "inbox:filters"])}`,
+    JSON.stringify(saved),
+  );
+  const view = render(viewAt(h, visit({ drafts: true })));
+  await waitFor(() => expect(filterSummary()).toHaveTextContent("Drafts"));
+  expect(savedFilters(h)).toEqual(saved);
+  view.rerender(viewAt(h, visit({ activity: "mentions" })));
+  await waitFor(() => expect(filterSummary()).toHaveTextContent("Mentions"));
+  expect(filterSummary()).not.toHaveTextContent("Drafts");
+});
+
+it("a drafts route retires a failed Inbox action, as the menu does", async () => {
+  const h = fixture();
+  const view = render(viewAt(h, visit({ activity: "mentions" })));
+  await screen.findByText("Please review this");
+  h.failSave();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open Alice in #Design" }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent("disk full");
+  view.rerender(
+    viewAt(h, {
+      ...visit({ drafts: true }),
+      entryId: "drafts",
+    } as PageNavigation),
+  );
+  await waitFor(() => expect(filterSummary()).toHaveTextContent("Drafts"));
+  view.rerender(
+    viewAt(h, {
+      ...visit({ activity: "mentions" }),
+      entryId: "back",
+    } as PageNavigation),
+  );
+  await waitFor(() => expect(filterSummary()).toHaveTextContent("Mentions"));
+  // Retry reloads the list; the read captured before Drafts doesn't replay.
+  // Either path clears the notice only after its run settles.
+  fireEvent.click(screen.getByRole("button", { name: "Retry inbox" }));
+  await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBeUndefined();
+});
+
+it("a route that swaps Drafts keeps focus on the filter trigger", async () => {
+  const h = fixture();
+  const view = render(viewAt(h, visit({ drafts: true })));
+  await waitFor(() => expect(filterSummary()).toHaveTextContent("Drafts"));
+  screen.getByRole("button", { name: "Inbox filters" }).focus();
+  view.rerender(viewAt(h, visit({ activity: "threads" })));
+  await waitFor(() => expect(filterSummary()).toHaveTextContent("Threads"));
+  expect(screen.getByRole("button", { name: "Inbox filters" })).toHaveFocus();
+  view.rerender(viewAt(h, visit({ drafts: true })));
+  await waitFor(() => expect(filterSummary()).toHaveTextContent("Drafts"));
+  expect(screen.getByRole("button", { name: "Inbox filters" })).toHaveFocus();
+});
+
+it("a route that leaves Drafts from the open filter menu returns focus to its trigger", async () => {
+  const h = fixture();
+  const view = render(viewAt(h, visit({ drafts: true })));
+  await waitFor(() => expect(filterSummary()).toHaveTextContent("Drafts"));
+  const user = userEvent.setup();
+  screen.getByRole("button", { name: "Inbox filters" }).focus();
+  await user.keyboard("{Enter}");
+  const menu = await screen.findByRole("menu", { name: "Inbox filters" });
+  await waitFor(() => expect(menu.contains(document.activeElement)).toBe(true));
+  view.rerender(viewAt(h, visit({ activity: "threads" })));
+  await waitFor(() => expect(filterSummary()).toHaveTextContent("Threads"));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Inbox filters" })).toHaveFocus(),
+  );
+});
+
+it("a drafts route on a fresh Inbox leaves focus where navigation put it", async () => {
+  const h = fixture();
+  const focused: Element[] = [];
+  const record = (event: FocusEvent) => focused.push(event.target as Element);
+  document.addEventListener("focusin", record);
+  try {
+    render(viewAt(h, visit({ drafts: true })));
+    await waitFor(() => expect(filterSummary()).toHaveTextContent("Drafts"));
+    expect(
+      focused.map((element) => element.getAttribute("aria-label")),
+    ).not.toContain("Inbox filters");
+  } finally {
+    document.removeEventListener("focusin", record);
+  }
+});
+
+it("a route that swaps Drafts leaves focus elsewhere alone", async () => {
+  const h = fixture();
+  const elsewhere = document.createElement("button");
+  document.body.append(elsewhere);
+  try {
+    const view = render(viewAt(h, visit({ drafts: true })));
+    await waitFor(() => expect(filterSummary()).toHaveTextContent("Drafts"));
+    elsewhere.focus();
+    view.rerender(viewAt(h, visit({ activity: "threads" })));
+    await waitFor(() => expect(filterSummary()).toHaveTextContent("Threads"));
+    expect(elsewhere).toHaveFocus();
+  } finally {
+    elsewhere.remove();
+  }
+});
+
 it("a plain open leaves saved filters alone", async () => {
   const h = fixture();
   const saved = {
@@ -3788,7 +3948,7 @@ it("Inbox Solo chat activity shared with a person sends without a tag", async ()
   expect(h.published[0]?.tags.filter(([name]) => name === "p")).toEqual([]);
 });
 
-it("a Solo chat row shows, and is ordered by, a later agent reply that is not Inbox evidence", async () => {
+it("a Solo chat row includes ordinary agent responses under All, not DMs, keeping threads separate", async () => {
   const h = fixture({ soloChannel: true, memberAgents: 1 });
   const progress = message(h.agent, "room", "Agent progress", 30);
   h.addEvent(progress);
@@ -3798,6 +3958,22 @@ it("a Solo chat row shows, and is ordered by, a later agent reply that is not In
   await waitFor(() => expect(rows()[0]).toHaveTextContent("Agent progress"));
   expect(rows()[1]).toHaveTextContent("A thread update");
   expect(screen.queryByText("Please review this")).not.toBeInTheDocument();
+  // Opening the timeline row reads it with one channel catch-up mark, leaving
+  // its separate thread row unread.
+  const before = h.journal()?.revision ?? 0;
+  fireEvent.click(
+    within(rows()[0] as HTMLElement).getByRole("button", { name: /^Open / }),
+  );
+  await waitFor(() =>
+    expect(h.journal()?.state.frontiers["activity:room"]).toBe(30),
+  );
+  expect(h.journal()?.revision).toBe(before + 1);
+  expect(
+    within(rows()[1] as HTMLElement).getByRole("img", { name: "Unread" }),
+  ).toBeInTheDocument();
+  // The sidebar keeps Solo chats apart from direct messages; so does Inbox.
+  await chooseFilter("DMs");
+  expect(screen.queryByText("Agent progress")).not.toBeInTheDocument();
 });
 
 it("Inbox keeps an open Solo chat timeline when a late reply regroups its mention", async () => {
