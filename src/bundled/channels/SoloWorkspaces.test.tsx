@@ -322,6 +322,46 @@ it("only offers Chats as a destination from a project", async () => {
   store.dispose();
 });
 
+it("starts a chat in a project from its heading plus", async () => {
+  const h = fixture();
+  const store = h.store();
+  const user = userEvent.setup();
+  render(h.view(store.queries));
+  try {
+    const heading = await screen.findByRole("button", { name: "Work" });
+    const header = heading.parentElement;
+    if (!header) throw new Error("Missing project header");
+    await user.click(
+      within(header).getByRole("button", { name: "New chat in Work" }),
+    );
+    expect(h.onNew).toHaveBeenCalledExactlyOnceWith("work");
+  } finally {
+    store.dispose();
+  }
+});
+
+it("opens the exact project from an empty project's New chat row", async () => {
+  const projectName =
+    "A very long project name that should not become the new chat label";
+  const h = fixture(projectName);
+  const store = h.store();
+  const user = userEvent.setup();
+  render(h.view(store.queries, "empty-project"));
+  try {
+    const choices = await screen.findAllByRole("button", {
+      name: `New chat in ${projectName}`,
+    });
+    const row = choices.find((choice) => choice.textContent === "New chat");
+    expect(row).toBeDefined();
+    if (!row) throw new Error("Missing empty project action");
+    row.focus();
+    await user.keyboard("{Enter}");
+    expect(h.onNew).toHaveBeenCalledExactlyOnceWith("work");
+  } finally {
+    store.dispose();
+  }
+});
+
 it("shares a workspace frame while keeping lead selection, disclosure and chat creation separate", async () => {
   const h = fixture();
   const store = h.store();

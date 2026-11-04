@@ -323,33 +323,41 @@ export function SoloWorkspaces({
     }
     setStepFocus(id);
   };
-  const visible = projects.map((project) => {
-    // A list that shrank back under the cap has nothing to fold.
-    const extra =
-      project.rows.length > SOLO_CHAT_CAP ? (expanded[project.id] ?? 0) : 0;
-    const limit = SOLO_CHAT_CAP + extra;
-    // Rows arrive newest first; chats kept past the cap keep that order.
-    const listed = project.rows.filter(
-      (item, index) =>
-        index < limit ||
-        item.pinned ||
-        item.id === renaming ||
-        held.has(item.id),
-    );
-    return {
-      ...project,
-      listed,
-      extra,
-      overflow: listed.slice(limit).map((item) => item.id),
-      // Retained chats that are no longer pinned can fold even when unexpanded.
-      foldable:
-        extra > 0 ||
-        listed
-          .slice(limit)
-          .some((item) => !item.pinned && item.id !== renaming),
-      hidden: project.rows.length - listed.length,
-    };
-  });
+  const visible = projects
+    .filter(
+      (project) =>
+        compose ||
+        project.id ||
+        project.rows.length ||
+        draftProject === project.id,
+    )
+    .map((project) => {
+      // A list that shrank back under the cap has nothing to fold.
+      const extra =
+        project.rows.length > SOLO_CHAT_CAP ? (expanded[project.id] ?? 0) : 0;
+      const limit = SOLO_CHAT_CAP + extra;
+      // Rows arrive newest first; chats kept past the cap keep that order.
+      const listed = project.rows.filter(
+        (item, index) =>
+          index < limit ||
+          item.pinned ||
+          item.id === renaming ||
+          held.has(item.id),
+      );
+      return {
+        ...project,
+        listed,
+        extra,
+        overflow: listed.slice(limit).map((item) => item.id),
+        // Retained chats that are no longer pinned can fold even when unexpanded.
+        foldable:
+          extra > 0 ||
+          listed
+            .slice(limit)
+            .some((item) => !item.pinned && item.id !== renaming),
+        hidden: project.rows.length - listed.length,
+      };
+    });
   const soloNeighborsRef = handoff?.soloNeighbors;
   useLayoutEffect(() => {
     if (!soloNeighborsRef) return;
@@ -410,12 +418,12 @@ export function SoloWorkspaces({
       <ChatActionsMenu
         id={`project-${project.id}`}
         title={project.name}
-        className={`${channelStyles.sectionHeader} ${styles.projectHeader}`}
+        className={`${channelStyles.sectionHeader} ${styles.projectHeader} ${compose ? styles.composedProjectHeader : ""}`}
         enabled={!!project.id}
         trailing={
           trailing ?? (
             <div className={channelStyles.sectionActions}>
-              {onNew && !project.id && (
+              {onNew && (!compose || !project.id) && (
                 <IconButton
                   size="compact"
                   aria-label={`New chat in ${project.name}`}
@@ -609,6 +617,25 @@ export function SoloWorkspaces({
             )}
           </div>
         )}
+        {!compose &&
+          !project.rows.length &&
+          project.id &&
+          (onNew ? (
+            <NavigationItem
+              variant="row"
+              label="New chat"
+              aria-label={`New chat in ${project.name}`}
+              title={`New chat in ${project.name}`}
+              icon={
+                <span className={styles.conversationIcon}>
+                  <PlusIcon size={16} strokeWidth={2.5} />
+                </span>
+              }
+              onClick={() => onNew(project.id)}
+            />
+          ) : (
+            <p className={styles.listMessage}>No chats in this workspace.</p>
+          ))}
       </>
     );
     const panel = (before?: ReactNode) => (

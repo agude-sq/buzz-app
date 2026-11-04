@@ -11,6 +11,10 @@ import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { splitPartition } from "../../features/relay/partition";
 import { NewWorkspace } from "../../features/solo/NewWorkspace";
+import { resetNewChatProject } from "../../features/solo/SoloDraft";
+import { soloDraftTarget } from "../../features/channel-navigation/routes";
+import { useSoloNavigation } from "../../features/channel-navigation/solo-navigation-react";
+import { soloNavigationFor } from "../../features/channel-navigation/solo-navigation";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   MenuRoot,
@@ -60,6 +64,9 @@ function ReadyNewMenu({
     session.soloPreferences.snapshot,
   );
   const preferences = useSidebarPreferences(session.sidebarPreferences);
+  const regions = useSoloNavigation(session);
+  const composing = !!regions.regions.find((region) => region.source)?.source
+    ?.composeWorkspaces;
   const [creatingChannel, setCreatingChannel] = useState(false);
   const [creatingSection, setCreatingSection] = useState(false);
   const [creatingProject, setCreatingProject] = useState(false);
@@ -92,6 +99,16 @@ function ReadyNewMenu({
         <MenuPopup>
           <MenuGroup>
             <MenuGroupLabel emphasis="quiet">Solo</MenuGroupLabel>
+            {!composing && (
+              <MenuItem
+                onClick={() => {
+                  if (current())
+                    void navigator.open(soloDraftTarget(session.scope));
+                }}
+              >
+                New chat
+              </MenuItem>
+            )}
             <MenuItem
               disabled={!session.soloPreferences.sectionCreationWritable}
               onClick={() => {
@@ -178,7 +195,16 @@ function ReadyNewMenu({
           create={(section) => session.soloPreferences.createSection(section)}
           close={() => setCreatingProject(false)}
           finalFocus={trigger}
-          onCreated={() => {}}
+          onCreated={async (id) => {
+            if (!current()) return;
+            if (await soloNavigationFor(session)?.openCreatedWorkspace(id))
+              return;
+            if (!current()) return;
+            resetNewChatProject(session.scope, id);
+            void navigator.open(
+              soloDraftTarget(session.scope, { project: id }),
+            );
+          }}
         />
       )}
     </>

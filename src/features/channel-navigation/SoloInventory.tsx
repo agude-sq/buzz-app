@@ -2,6 +2,7 @@ import { readView, subscribeView, viewRevision } from "../../shared/view-state";
 import { useSoloRowActivation } from "./useSoloRowActivation";
 import type { ComposeWorkspaces } from "./WorkspaceComposition";
 import { useSoloNavigation } from "./solo-navigation-react";
+import { soloNavigationFor } from "./solo-navigation";
 import {
   useCallback,
   useRef,
@@ -47,6 +48,7 @@ import creationStyles from "./SoloInventory.module.css";
 import {
   DotsThreeIcon,
   ChatCircleIcon,
+  PlusIcon,
 } from "../../shared/design-system/icons";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import type { ContributionReader } from "../conversation/contracts";
@@ -92,7 +94,7 @@ export function SoloInventory({
   const pendingClick = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   );
-  useSyncExternalStore(
+  const preferences = useSyncExternalStore(
     session.soloPreferences.subscribe,
     session.soloPreferences.snapshot,
   );
@@ -192,6 +194,13 @@ export function SoloInventory({
     session.unread,
     JSON.stringify(conversations.map((item) => item.id)),
   );
+  const composing = !!regions.regions.find((region) => region.source)?.source
+    ?.composeWorkspaces;
+  const empty =
+    list.status === "ready" &&
+    preferences.status === "ready" &&
+    !conversations.length &&
+    !preferences.data?.sections.length;
   const current = () => !handoff || handoff.session === session;
   const newChat = (project?: string) => {
     if (!current()) return;
@@ -200,6 +209,7 @@ export function SoloInventory({
   };
   const creationItems = (
     <>
+      {!composing && <MenuItem onClick={() => newChat()}>New chat</MenuItem>}
       <MenuItem
         disabled={!session.soloPreferences.sectionCreationWritable}
         onClick={() => {
@@ -218,9 +228,17 @@ export function SoloInventory({
             <IconButton
               ref={trigger}
               size="compact"
-              aria-label="Workspace actions"
-              title="Workspace actions"
-              icon={<DotsThreeIcon size={15} strokeWidth={2.5} />}
+              aria-label={
+                composing ? "Workspace actions" : "New chat or workspace"
+              }
+              title={composing ? "Workspace actions" : "New chat or workspace"}
+              icon={
+                composing ? (
+                  <DotsThreeIcon size={15} strokeWidth={2.5} />
+                ) : (
+                  <PlusIcon size={15} strokeWidth={2.5} />
+                )
+              }
             />
           }
         />
@@ -245,13 +263,26 @@ export function SoloInventory({
   );
   const content = (compose?: ComposeWorkspaces) => (
     <>
+      {!compose && empty && (
+        <NavigationItem
+          variant="row"
+          label="New chat"
+          icon={<PlusIcon size={16} />}
+          onClick={() => newChat()}
+        />
+      )}
       {creatingProject && (
         <NewWorkspace
           session={session}
           create={(section) => session.soloPreferences.createSection(section)}
           close={() => setCreatingProject(false)}
           finalFocus={trigger}
-          onCreated={() => {}}
+          onCreated={async (id) => {
+            if (!current() || !trigger.current?.isConnected) return;
+            if (await soloNavigationFor(session)?.openCreatedWorkspace(id))
+              return;
+            if (trigger.current?.isConnected) newChat(id);
+          }}
         />
       )}
       <SoloWorkspaces

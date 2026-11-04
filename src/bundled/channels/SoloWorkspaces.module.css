@@ -263,6 +263,9 @@
   position: absolute;
   top: 50%;
   transform: translateY(-50%);
+  inset-inline-end: calc(var(--space-1) + var(--size-control-sm));
+}
+.composedProjectHeader > [data-solo-overflow-action] {
   inset-inline-end: var(--space-1);
 }
 .projectHeader [data-solo-workspace-new-task] {

@@ -122,7 +122,7 @@ that agent in Buzz; they do not notify the external app through this connection.
   such as “Pinky and 182 others were added.” Hover or activate “182 others” to see
   the full, scrollable list of names. Messages and huddle entries split groups.
 
-- **Solo** organizes your chats with agents. Choose **+** in **Chats**, select or tag
+- **Solo** organizes your chats with agents. Choose **New chat**, select or tag
   an agent, and send a message. Solo conversations continue at the chat's top
   level rather than requiring a new thread for each reply. Solo chats can also
   be shared with other people; do not describe every Solo chat as visible only
@@ -133,13 +133,16 @@ that agent in Buzz; they do not notify the external app through this connection.
   notification. Selecting someone outside the channel does not grant access;
   inviting them requires an explicit decision from someone with permission.
 - **Workspaces** group Solo chats and provide starting folders and instructions.
-  With Nexus enabled, each workspace also contains its tasks. The title opens
+  With Nexus enabled, each workspace also contains its tasks. Creating one selects
+  it so you can start a conversation with its optional Lead. The title opens
   its optional lead task, or a task composer if it has no lead; sending from
   that composer establishes the lead. Only the chevron expands or collapses
   the workspace. Hover Solo or a workspace and use **New task**, beside **…**, for another task. The button also appears with keyboard focus. Chat creation
   is available only in **Chats**. The workspace itself stays selected while its Lead
   conversation is open; the Lead has no separate task row. New task's agent picker
   lists agents eligible to run the task on this device.
+  Without Nexus, chat creation remains available in the global **+** menu,
+  Solo and each workspace; creating a workspace opens a chat draft filed there.
   Folders are optional unless **Work in a new worktree** is on. In that mode,
   add at least one project folder; the form shows a message beside Folders
   until you add one or turn worktree mode off.

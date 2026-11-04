@@ -397,6 +397,16 @@ export class SoloNavigationService extends Service implements SoloNavigation {
     }
     for (const listener of this.listeners) listener();
   };
+  async openCreatedWorkspace(workspaceId: string): Promise<boolean> {
+    const region = this.value.regions.find((item) => item.source);
+    const source = region?.source;
+    if (!source?.composeWorkspaces || !source.openWorkspace) return false;
+    const binding = this.value.binding;
+    if (!binding || region?.reason)
+      throw new Error("Workspace selection is not ready. Try again.");
+    await source.openWorkspace(binding, workspaceId);
+    return true;
+  }
   retry = (key: string) => {
     if (this.sources().some((source) => source.key === key)) this.bind(true);
   };

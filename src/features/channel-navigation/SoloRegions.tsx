@@ -31,6 +31,7 @@ import {
   SlidersHorizontalIcon,
   DotsThreeIcon,
   PencilSimpleIcon,
+  PlusIcon,
 } from "../../shared/design-system/icons";
 import {
   MenuRoot,
@@ -395,15 +396,18 @@ function RegionFrame({
               )}
               {((creation && !directCreation) || ordinaryActions) && (
                 <RegionAction
-                  action={
-                    (directCreation ? undefined : creation) ?? {
+                  action={{
+                    ...((directCreation ? undefined : creation) ?? {
                       id: "create",
-                      label: "Solo actions",
+                      label: composing ? "Solo actions" : "Create",
                       icon: "plus",
                       onSelect() {},
                       menu: () => [],
-                    }
-                  }
+                    }),
+                    ...(composing
+                      ? { icon: <DotsThreeIcon size={15} strokeWidth={2.5} /> }
+                      : {}),
+                  }}
                   run={run}
                   extraItems={ordinaryActions}
                   triggerRef={creationTrigger}
@@ -471,7 +475,7 @@ function RegionAction({
   }
   const icon =
     action.icon === "plus" ? (
-      <DotsThreeIcon size={15} strokeWidth={2.5} />
+      <PlusIcon size={15} strokeWidth={2.5} />
     ) : action.icon === "view" ? (
       <SlidersHorizontalIcon size={15} />
     ) : (

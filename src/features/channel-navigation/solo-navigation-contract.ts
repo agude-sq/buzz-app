@@ -142,6 +142,11 @@ export type SoloRegionSource = Readonly<{
   component: ComponentType<SoloRegionProps>;
   /** Compose tasks with ordinary chats in the host's existing workspace inventory. */
   composeWorkspaces?: true;
+  /** Select a newly created host workspace using this source’s Lead/draft policy. */
+  openWorkspace?(
+    binding: SoloRegionBinding,
+    workspaceId: string,
+  ): Promise<void>;
   actions?: (binding: SoloRegionBinding) => readonly SoloRegionAction[];
 }>;
 export type SoloChatInput = Readonly<{
