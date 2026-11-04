@@ -124,9 +124,22 @@ that agent in Buzz; they do not notify the external app through this connection.
 
 - **Solo** organizes your chats with agents. Choose **New chat**, select or tag
   an agent, and send a message. Solo conversations continue at the chat's top
-  level rather than requiring a new thread for each reply. Solo chats can also
-  be shared with other people; do not describe every Solo chat as visible only
-  to its creator.
+  level rather than requiring a new thread for each reply. Where available, use
+  **Model and effort** in the composer before sending; Solo keeps those choices
+  for that chat until you reset them in the same control, even if its available
+  models change. Wait for saved choices to load before sending; an unreadable
+  store never silently falls back to defaults. If choices cannot be read, use
+  **Retry saved choices** before sending. If their agent catalog cannot be loaded, retry
+  or reset them in the model control. If New chat cannot clear
+  its choices after sending, reset them before starting another chat. Wait for
+  pending model changes to save before sending. If saving fails, the current
+  composer keeps your unsaved selection; other windows may not see it.
+  If a refused start offers **Retry restoring message**, it keeps the original
+  message, attachments, and choices while this window stays open. Retry never
+  replaces a newer New chat draft or a later Reset. Reloading or dismissing that
+  notice ends this recovery option.
+  Solo chats can also be shared with other people; do not describe every Solo
+  chat as visible only to its creator.
 - **Team** contains community channels and their threads. Use the **@** picker
   to address a channel member. Typing a name alone does not guarantee a
   notification. Selecting someone outside the channel does not grant access;
@@ -266,10 +279,19 @@ that agent in Buzz; they do not notify the external app through this connection.
   and Linux) an HTTP(S) link in a message to open it in your default browser
   instead of a side panel. You can also right-click the link and choose
   **Open in browser**.
+- **Inbox preview**: with a mouse or trackpad, rest the pointer on **Inbox** in
+  the sidebar to see recent mentions, DMs, and thread replies without opening
+  the Inbox page. Archived conversations are not shown. Clicking a conversation
+  opens it directly; **Open Inbox** opens the page. The card's **Unread only**
+  switch is separate from the Inbox page's filters. The preview is not shown on
+  touch devices or while the Inbox page is open.
 - **Sidebar width**: drag the sidebar's right edge, or focus its resize handle
   and use the Left/Right arrow keys. Double-click the handle to reset the width.
   Messages and plugin pages share the saved width within the same community
   and identity; narrow windows use a navigation drawer instead.
+- **Sidebar sections**: in **All**, use the arrow beside **Solo** or **Team** to
+  collapse either section independently. Buzz remembers the collapsed sections
+  for that community and identity.
 - **Panel dividers**: the divider between a page and its side panel (such as
   the Inbox list and a conversation) works the same way. Each page remembers
   its own width within the same community and identity; double-click to reset.
@@ -432,3 +454,7 @@ Release builds ignore this optional helper.
 ### Builderlab in development
 
 With the pinned-viewer development server, Settings → Plugins → Builderlab manages one sign-in for hosted communities, remote agents and apps. It survives app reloads while the server runs. Signing out or session expiry signs all three out. The credential stays on the server and is not saved to disk.
+
+### Reconnecting an old agent in a DM
+
+On desktop, **Connect [agent name]** may appear inside a DM with an old agent you own that is available to import from this computer. It preselects compatible saved harness, provider and model choices, and preserves saved effort settings. Choose a harness if the old type is unavailable; settings that were not saved use the selected type’s defaults. Review the inline controls, complete installation or sign-in if prompted, stop the agent in old Buzz, then choose **Connect**. Your agent keeps its identity and conversation. This does not resend earlier messages. The same private card can appear in a channel or thread after you mention an eligible agent you own. Only you see it, once per agent in the loaded conversation. After connecting, **Ask the agent to respond** explicitly queues a follow-up addressed only to that agent in the original message’s thread; it does not automatically replay your request. If no prompt appears, use **Agents → New agent → Import an agent**.
