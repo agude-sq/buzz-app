@@ -754,7 +754,8 @@ export type AgentType<Config = unknown> = {
    * instructions; the new agent starts with the config it settles on. */
   Create?: ComponentType<AgentCreateProps<Config>>;
   /** Optional creation configuration group. The type places the host's Harness
-   * row alongside its own controls and keeps discovery/recovery with them. */
+   * row alongside its own controls and keeps discovery/recovery with them.
+   * Takes precedence over CreateModel in the creation dialog. */
   CreateConfiguration?: ComponentType<
     AgentCreateProps<Config> & { harnessControl: ReactNode }
   >;
