@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useId,
   useCallback,
   useRef,
   useState,
@@ -10,7 +11,11 @@ import type {
   WorkflowDefinition,
 } from "../../features/workflows/types";
 import { PlayIcon, TrashIcon } from "../../shared/design-system/icons";
-import { MenuIcon, MenuItem } from "../../shared/design-system/ui/Menu";
+import {
+  MenuIcon,
+  MenuItem,
+  MenuNote,
+} from "../../shared/design-system/ui/Menu";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { ConfirmAction } from "./ConfirmAction";
@@ -83,6 +88,7 @@ export function WorkflowChannel({
     capability.operations.snapshot,
   );
   const submission = useRef<string | null>(null);
+  const deleteReasonId = useId();
   const editorGeneration = useRef(0);
   const [draft, setDraft] = useState<Draft | null>(() =>
     draftFor(initialSelection, 0),
@@ -238,12 +244,22 @@ export function WorkflowChannel({
     if (
       !draft?.original ||
       submission.current ||
-      !capability.permissions.canDelete(draft.original) ||
       unresolvedWrite ||
-      !capability.availability.delete ||
       draft.operationId
     )
       return;
+    if (
+      !capability.permissions.canDelete(draft.original) ||
+      !capability.availability.delete
+    ) {
+      setConfirmDelete(false);
+      setError(
+        capability.availability.delete
+          ? "You no longer have permission to delete this workflow. Refresh and try again."
+          : "Workflow deletion is unavailable on this connection.",
+      );
+      return;
+    }
     // The page owns submission and recovery after this editor is discarded.
     const definition = draft.original;
     setDraft(null);
@@ -373,21 +389,31 @@ export function WorkflowChannel({
               )
             }
             actions={
-              canDelete && (
-                <MenuItem
-                  tone="danger"
-                  disabled={
-                    !!draft.operationId ||
-                    unresolvedWrite ||
-                    !capability.availability.delete
-                  }
-                  onClick={() => setConfirmDelete(true)}
-                >
-                  <MenuIcon>
-                    <TrashIcon size={14} />
-                  </MenuIcon>
-                  Delete workflow
-                </MenuItem>
+              draft.original && (
+                <>
+                  <MenuItem
+                    tone="danger"
+                    aria-describedby={!canDelete ? deleteReasonId : undefined}
+                    disabled={
+                      !canDelete ||
+                      !!draft.operationId ||
+                      unresolvedWrite ||
+                      !capability.availability.delete
+                    }
+                    onClick={() => setConfirmDelete(true)}
+                  >
+                    <MenuIcon>
+                      <TrashIcon size={14} />
+                    </MenuIcon>
+                    Delete workflow
+                  </MenuItem>
+                  {!canDelete && (
+                    <MenuNote id={deleteReasonId}>
+                      Only the author or their verified agent owner can delete
+                      this workflow.
+                    </MenuNote>
+                  )}
+                </>
               )
             }
             runs={

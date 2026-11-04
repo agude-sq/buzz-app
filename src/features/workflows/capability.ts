@@ -378,8 +378,15 @@ export function createWorkflows({
           profiles?.owner?.(workflow.owner) === viewer)
       );
     },
-    subscribe: (listener: () => void) =>
-      profiles?.subscribe(listener) ?? (() => {}),
+    subscribe(listener: () => void) {
+      const stopProfiles = profiles?.subscribe(listener);
+      // clear() and dispose() already rebuild after access/lifetime changes.
+      listeners.add(listener);
+      return () => {
+        stopProfiles?.();
+        listeners.delete(listener);
+      };
+    },
   });
   function send(
     kind: 30620 | 46020 | 5,

@@ -171,13 +171,14 @@ export function WorkflowCommunity({
       openChannel("");
       return;
     }
-    if (
-      !capability.permissions.canDelete(definition) ||
-      !capability.availability.delete
-    )
-      return;
     deleting.current = true;
     try {
+      if (!capability.permissions.canDelete(definition))
+        throw new Error(
+          "You no longer have permission to delete this workflow. Refresh and try again.",
+        );
+      if (!capability.availability.delete)
+        throw new Error("Workflow deletion is unavailable on this connection.");
       capability.delete(definition);
       setDeleteError(undefined);
     } catch (cause) {

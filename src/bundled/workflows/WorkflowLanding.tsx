@@ -62,6 +62,7 @@ import {
   MenuTrigger,
   MenuPopup,
   MenuItem,
+  MenuNote,
   MenuIcon,
   MenuRadioGroup,
   MenuRadioItem,
@@ -564,6 +565,7 @@ function WorkflowCard({
           ? "Saving is unavailable from this host."
           : undefined;
   const reasonId = useId();
+  const deleteReasonId = useId();
   const descriptionId = useId();
   const statusId = useId();
   const warning = getWorkflowActivationWarning(definition.yaml);
@@ -678,6 +680,7 @@ function WorkflowCard({
           </MenuItem>
           <MenuItem
             tone="danger"
+            aria-describedby={!canDelete ? `${deleteReasonId}-row` : undefined}
             disabled={
               !canDelete ||
               locked ||
@@ -691,6 +694,12 @@ function WorkflowCard({
             </MenuIcon>
             Delete workflow
           </MenuItem>
+          {!canDelete && (
+            <MenuNote id={`${deleteReasonId}-row`}>
+              Only the author or their verified agent owner can delete this
+              workflow.
+            </MenuNote>
+          )}
         </MenuPopup>
       </MenuRoot>
     </div>
@@ -770,6 +779,9 @@ function WorkflowCard({
             <MenuPopup size="compact" align="end">
               <MenuItem
                 tone="danger"
+                aria-describedby={
+                  !canDelete ? `${deleteReasonId}-detail` : undefined
+                }
                 disabled={
                   !canDelete ||
                   locked ||
@@ -783,6 +795,12 @@ function WorkflowCard({
                 </MenuIcon>
                 Delete workflow
               </MenuItem>
+              {!canDelete && (
+                <MenuNote id={`${deleteReasonId}-detail`}>
+                  Only the author or their verified agent owner can delete this
+                  workflow.
+                </MenuNote>
+              )}
             </MenuPopup>
           </MenuRoot>
         </div>
@@ -896,7 +914,6 @@ function WorkflowCard({
           onCancel={() => setConfirmDelete(false)}
           onConfirm={() => {
             setConfirmDelete(false);
-            if (!capability.permissions.canDelete(definition)) return;
             onDelete(definition);
           }}
         />
@@ -1665,7 +1682,7 @@ export function WorkflowLanding({
           }
           description={
             emptyFromOwnership
-              ? "Workflows you own appear here. Other people’s workflows are in All channel workflows."
+              ? "Workflows you authored appear here. Other authors’ workflows are in All channel workflows."
               : emptyFromFilters
                 ? "Try changing or clearing your filters."
                 : "Automations that keep your community moving."

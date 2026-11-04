@@ -200,4 +200,6 @@ menu and choose **Delete workflow**. You can delete workflows you authored or
 workflows authored by an agent whose ownership Buzz has verified belongs to you.
 This also works when your channel role is Guest.
 Confirm the deletion; pending or uncertain results remain in the workflow notices.
+If permission changes during confirmation, Buzz explains why deletion could not
+start and keeps any editor draft.
 Owning the agent does not grant permission to edit or run its workflow.
