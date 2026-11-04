@@ -62,6 +62,7 @@ import {
   PanelHeader,
   PanelHeaderLabel,
 } from "../../shared/design-system/ui/PanelHeader";
+import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import {
   TIME_PRESETS,
   dueDateLabel,
@@ -73,6 +74,7 @@ import {
   presetHint,
 } from "./model";
 import { scopeOf, useReminders } from "./react";
+import { SnoozeDialog } from "./RemindDialog";
 import styles from "./Reminders.module.css";
 import { avatarMedia } from "../../shared/avatar-source";
 import { channelText } from "../../features/channels/channel-icon";
@@ -497,6 +499,9 @@ function ReminderRow({
   const id = useId();
   const [busy, setBusy] = useState(false);
   const [completing, setCompleting] = useState(false);
+  const [choosing, setChoosing] = useState(false);
+  const snoozeTrigger = useRef<HTMLButtonElement>(null);
+  const notify = useToastNotification();
   const present = useIsPresent();
   useLayoutEffect(() => {
     // A newer relay event can win a successful write. Reset surviving rows,
@@ -627,6 +632,7 @@ function ReminderRow({
             <MenuTrigger
               render={
                 <Button
+                  ref={snoozeTrigger}
                   size="sm"
                   variant={overdue ? "attention" : "ghost"}
                   disabled={busy}
@@ -644,8 +650,19 @@ function ReminderRow({
                   <MenuNote>{dueDateLabel(reminder.notBefore, now)}</MenuNote>
                 )}
               {snoozeItems}
+              <MenuItem disabled={busy} onClick={() => setChoosing(true)}>
+                Custom…
+              </MenuItem>
             </MenuPopup>
           </MenuRoot>
+          {choosing && (
+            <SnoozeDialog
+              title={pending ? "Snooze reminder" : "Remind me again"}
+              save={(notBefore) => reminders.snooze(reminder.id, notBefore)}
+              close={() => setChoosing(false)}
+              finalFocus={snoozeTrigger}
+            />
+          )}
           {openConversation ? (
             <IconButton
               variant="avatar"
@@ -691,7 +708,26 @@ function ReminderRow({
                   <MenuItem
                     tone="danger"
                     disabled={busy}
-                    onClick={() => update(() => reminders.cancel(reminder.id))}
+                    onClick={() =>
+                      update(async () => {
+                        const due = reminder.notBefore;
+                        await reminders.cancel(reminder.id);
+                        // Snooze rewrites the cancelled reminder, note and
+                        // all, as pending at its old due time.
+                        notify(
+                          "Reminder cancelled",
+                          "success",
+                          due === undefined
+                            ? undefined
+                            : {
+                                label: "Undo",
+                                onClick: () =>
+                                  run(reminders.snooze(reminder.id, due)),
+                                timeout: 3000,
+                              },
+                        );
+                      })
+                    }
                   >
                     <MenuIcon>
                       <XIcon size={16} />

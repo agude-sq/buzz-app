@@ -111,12 +111,15 @@ function harness(history: RelayEvent[] = []) {
         events.map((e) => ({ eventId: e.id, content: JSON.parse(e.content) })),
       sign: async (intent) => {
         signed.push(intent);
-        return wire(
-          `e${signed.length}`,
-          intent.createdAt,
-          intent.content.status,
-          intent.d,
-        );
+        return {
+          ...wire(
+            `e${signed.length}`,
+            intent.createdAt,
+            intent.content.status,
+            intent.d,
+          ),
+          content: JSON.stringify(intent.content),
+        };
       },
     },
     query: () => query(),
@@ -186,6 +189,28 @@ describe("reminder writes and reconciliation", () => {
       [101, "pending"],
     ]);
     expect(h.head()).toMatchObject({ createdAt: 101, status: "pending" });
+  });
+
+  it("restores a cancelled reminder, note included, when it is snoozed", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: 100_000 });
+    const h = harness([
+      {
+        ...wire("e0", 90, "pending"),
+        content: JSON.stringify({ target, note: "call", status: "pending" }),
+      },
+    ]);
+    await h.model.capability.refresh();
+    await h.model.capability.cancel("r1");
+    // Cancelled reminders stay in the list, hidden, so Undo can find them.
+    expect(h.head()).toMatchObject({ status: "cancelled", note: "call" });
+    await h.model.capability.snooze("r1", 500);
+    expect(h.signed[1]).toEqual({
+      d: "r1",
+      createdAt: 101,
+      notBefore: 500,
+      content: { target, note: "call", status: "pending" },
+    });
+    expect(h.head()).toMatchObject({ status: "pending", note: "call" });
   });
 
   it("recovers after a failed write", async () => {

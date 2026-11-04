@@ -1,12 +1,18 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { type ReactNode, useLayoutEffect, useRef } from "react";
+import {
+  type JSXElementConstructor,
+  type ReactNode,
+  useLayoutEffect,
+  useRef,
+} from "react";
 import {
   act,
   cleanup,
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
@@ -22,6 +28,7 @@ import userEvent from "@testing-library/user-event";
 import { RemindersPage } from "./RemindersPage";
 import { apply } from "./index";
 import { mediaUrl } from "../../features/relay/transport";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
 
 afterEach(cleanup);
 
@@ -220,6 +227,115 @@ it("marks done, snoozes and cancels a pending reminder from its row", async () =
   expect(reminders.cancel).toHaveBeenCalledWith("due soon");
 });
 
+it("snoozes to a custom future time, keeping the entry when the save fails", async () => {
+  const user = userEvent.setup();
+  const state = {
+    status: "ready" as const,
+    reminders: [reminder("due soon", "pending", 1, now + 600)],
+  };
+  const snooze = vi
+    .fn<Reminders["snooze"]>()
+    .mockRejectedValueOnce(new Error("offline"))
+    .mockResolvedValue(undefined);
+  page({
+    snapshot: () => state,
+    subscribe: () => () => {},
+    snooze,
+  } as unknown as Reminders);
+  const trigger = within(screen.getByRole("listitem")).getByRole("button", {
+    name: "Snooze: Ada",
+  });
+  await user.click(trigger);
+  const items = await screen.findAllByRole("menuitem");
+  expect(items.at(-1)).toHaveTextContent("Custom…");
+  await user.click(screen.getByRole("menuitem", { name: "Custom…" }));
+  const dialog = await screen.findByRole("dialog", { name: "Snooze reminder" });
+  const save = within(dialog).getByRole("button", { name: "Save" });
+  fireEvent.change(within(dialog).getByLabelText("Reminder date"), {
+    target: { value: "2000-01-01" },
+  });
+  expect(within(dialog).getByRole("status")).toHaveTextContent(
+    "Choose a date and time in the future.",
+  );
+  expect(save).toBeDisabled();
+  fireEvent.change(within(dialog).getByLabelText("Reminder date"), {
+    target: { value: "2099-06-20" },
+  });
+  fireEvent.change(within(dialog).getByLabelText("Reminder time"), {
+    target: { value: "16:15" },
+  });
+  const at = new Date("2099-06-20T16:15").getTime() / 1000;
+  await user.click(save);
+  expect(snooze).toHaveBeenLastCalledWith("due soon", at);
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "The reminder could not be updated. Try again.",
+  );
+  expect(within(dialog).getByLabelText("Reminder time")).toHaveValue("16:15");
+  await user.click(save);
+  expect(snooze).toHaveBeenCalledTimes(2);
+  expect(snooze).toHaveBeenLastCalledWith("due soon", at);
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await waitFor(() => expect(trigger).toHaveFocus());
+});
+
+it("offers Undo after Cancel, restoring the old due time", async () => {
+  const user = userEvent.setup();
+  const state = {
+    status: "ready" as const,
+    reminders: [reminder("due soon", "pending", 1, now + 600)],
+  };
+  const reminders = {
+    snapshot: () => state,
+    subscribe: () => () => {},
+    cancel: vi.fn(() => Promise.resolve()),
+    snooze: vi.fn(() => Promise.resolve()),
+  } as unknown as Reminders;
+  page(reminders, ToastProvider);
+  await user.click(screen.getByRole("button", { name: "More actions: Ada" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Cancel reminder" }),
+  );
+  expect(reminders.cancel).toHaveBeenCalledExactlyOnceWith("due soon");
+  expect(await screen.findByText("Reminder cancelled")).toBeInTheDocument();
+  expect(reminders.snooze).not.toHaveBeenCalled();
+  // Sonner's swipe handling needs pointer capture, which jsdom lacks.
+  fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+  expect(reminders.snooze).toHaveBeenCalledExactlyOnceWith(
+    "due soon",
+    now + 600,
+  );
+});
+
+it("leaves a reminder cancelled once its Undo expires", async () => {
+  vi.useFakeTimers();
+  try {
+    const state = {
+      status: "ready" as const,
+      reminders: [reminder("due soon", "pending", 1, now + 600)],
+    };
+    const reminders = {
+      snapshot: () => state,
+      subscribe: () => () => {},
+      cancel: vi.fn(() => Promise.resolve()),
+      snooze: vi.fn(() => Promise.resolve()),
+    } as unknown as Reminders;
+    page(reminders, ToastProvider);
+    fireEvent.click(screen.getByRole("button", { name: "More actions: Ada" }));
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Cancel reminder" }));
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(screen.getByText("Reminder cancelled")).toBeInTheDocument();
+    await act(() => vi.advanceTimersByTimeAsync(2_999));
+    expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
+    // Past the timeout and Sonner's exit transition.
+    await act(() => vi.advanceTimersByTimeAsync(1_000));
+    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+    expect(reminders.snooze).not.toHaveBeenCalled();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("shows a note-only reminder without an open action", () => {
   page([
     {
@@ -405,7 +521,10 @@ it("ages due labels while open, with no reminder or live events", async () => {
   }
 });
 
-function page(source: Reminder[] | Reminders) {
+function page(
+  source: Reminder[] | Reminders,
+  wrapper?: JSXElementConstructor<{ children: ReactNode }>,
+) {
   const state = { status: "ready" as const, reminders: source };
   const reminders = Array.isArray(source)
     ? ({
@@ -430,6 +549,7 @@ function page(source: Reminder[] | Reminders) {
       navigator={{ open: vi.fn() } as unknown as Navigation}
       clock={{ subscribe: () => () => {}, read: () => now }}
     />,
+    wrapper ? { wrapper } : {},
   );
 }
 

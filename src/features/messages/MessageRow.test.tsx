@@ -2635,6 +2635,67 @@ it("contains a broken plugin message action to its own contribution", () => {
   }
 });
 
+it("shows a plugin mark on a grouped message, once, outside its hidden byline", () => {
+  const action = {
+    id: "mark",
+    title: "Mark",
+    key: "test.plugin/mark",
+    pluginId: "test.plugin",
+    revision: "one",
+    matches: () => true,
+    component: () => null,
+    marker: () => <span role="img" aria-label="Reminder set for later" />,
+  };
+  const actions = [action];
+  const none: never[] = [];
+  const channelList = { channels: [], status: "ready" };
+  const session = {
+    viewer: "viewer",
+    presence: {
+      subscribe: () => () => {},
+      status: () => "unknown",
+      limited: () => false,
+    },
+    messages: { report: undefined },
+    channels: { subscribeList: () => () => {}, list: () => channelList },
+  } as unknown as RelaySession;
+  const props = {
+    row: { ...row, replyCount: 0 },
+    session,
+    profile: undefined,
+    media: () => undefined,
+    onOpenLink: () => false,
+    day: false,
+    retry: undefined,
+    extensions: {
+      tools: { snapshot: () => none, subscribe: () => () => {} },
+      inline: { snapshot: () => none, subscribe: () => () => {} },
+      actions: { snapshot: () => actions, subscribe: () => () => {} },
+    },
+  };
+  const mark = () => {
+    // Announced once: not also inside the screen-reader byline.
+    const [only, ...others] = screen.getAllByRole("img", {
+      name: "Reminder set for later",
+    });
+    expect(others).toEqual([]);
+    return only as HTMLElement;
+  };
+  try {
+    const view = renderDom(<MessageRow {...props} layout="continuation" />);
+    // jsdom applies no CSS, so the hidden byline is found by its class.
+    expect(mark().closest(".sr-only")).toBeNull();
+    // A copy leaves the mark out, as it does the hidden byline.
+    expect(mark().closest(".select-none")).not.toBeNull();
+    // A leading row keeps its mark in the byline, beside the time.
+    view.rerender(<MessageRow {...props} layout="timeline" />);
+    expect(mark().closest(".sr-only")).toBeNull();
+    expect(mark().parentElement?.querySelector("time")).not.toBeNull();
+  } finally {
+    cleanup();
+  }
+});
+
 it("contains a throwing plugin action icon and opened component", async () => {
   const broken = () => {
     throw new Error("broken contribution");

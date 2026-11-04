@@ -207,6 +207,11 @@ that agent in Buzz; they do not notify the external app through this connection.
 - **Emoji suggestions** appear when you type `:` and an emoji name. If a name
   is shortened with an ellipsis, hover over it or use the arrow keys to select
   it and see the full name in a tooltip.
+- **Reminders**, in the desktop app when the plugin is on: choose **Remind me**
+  in a sent message's ⋯ menu. The message then shows an alarm mark; hover it for
+  the due time. In **Reminders**, a reminder's due time snoozes it to a preset or
+  **Custom…** date and time, and **Cancel reminder** offers **Undo** for a few
+  seconds. A reminder's note can't be edited once set.
 - **Spoilers** stay hidden in reminder previews and notifications as `[Spoiler]`.
   Open the original message to reveal them.
 - **Canvas** holds shared notes and context for a channel or chat. Messages and

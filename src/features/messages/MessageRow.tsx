@@ -452,6 +452,16 @@ function MessageRowContent({
       </MenuItem>
     ),
   );
+  const markers =
+    session &&
+    actions.map(
+      (action) =>
+        action.marker && (
+          <ContributionBoundary key={contributionKey(action)} fallback={null}>
+            <action.marker message={row} session={session} />
+          </ContributionBoundary>
+        ),
+    );
   // A message renderer may draw some attachments itself. Its claims count only
   // while its card is mounted, and they return to the host list while its
   // fallback shows. A remounted card starts healthy and claims again.
@@ -1020,19 +1030,13 @@ function MessageRowContent({
                 {!stackPrevious && (
                   <MessageTimestamp createdAt={row.createdAt} />
                 )}
-                {session &&
-                  actions.map(
-                    (action) =>
-                      action.marker && (
-                        <ContributionBoundary
-                          key={contributionKey(action)}
-                          fallback={null}
-                        >
-                          <action.marker message={row} session={session} />
-                        </ContributionBoundary>
-                      ),
-                  )}
+                {!stackPrevious && markers}
               </div>
+              {/* A continuation's byline is hidden, so its marks get their own
+                line; like that byline, a copy leaves them out. */}
+              {stackPrevious && markers?.some(Boolean) && (
+                <div className={`${styles.byline} select-none`}>{markers}</div>
+              )}
             </div>
             {row.sentFromThread && (
               <div className={styles.sentFromThread}>
