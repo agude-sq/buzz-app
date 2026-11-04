@@ -1646,8 +1646,13 @@ it("starts no protected server for a standalone turn whose agent was retired whi
     signal: new AbortController().signal,
     prompt: async () => "check",
   });
-  await f.runtime.retire(pubkey);
-  letting.resolve();
+  const retiring = f.runtime.retire(pubkey);
+  try {
+    expect(f.worker.spawn).not.toHaveBeenCalled();
+  } finally {
+    letting.resolve();
+  }
+  await retiring;
   await expect(running).resolves.toMatchObject({ ok: false });
   expect(f.worker.spawn).not.toHaveBeenCalled();
 });

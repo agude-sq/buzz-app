@@ -662,6 +662,7 @@ export class CodexRuntime {
   }
   preview(agent: Agent): Promise<Models> {
     const handle = this.handle(agent.key);
+    if (handle?.protection) this.assertRetired(agent.key, true);
     if (agent.protection && !handle?.protection)
       throw new Error("The protected agent has no live policy binding");
     handle?.protection?.assertAvailable();
@@ -792,7 +793,6 @@ export class CodexRuntime {
   }
   retire(agent: AgentKey): Promise<void> {
     const prior = this.stopping.get(agent);
-    if (prior) return prior;
     const disposals = [...(this.disposals.get(agent)?.keys() ?? [])].map(
       (execution) => this.disposeExecution(agent, execution, true),
     );
@@ -817,6 +817,7 @@ export class CodexRuntime {
       ([, remote]) => remote.agent === agent,
     );
     const stopped = Promise.allSettled([
+      prior,
       ...disposals,
       ...actions.map((action) => action.done.catch(() => undefined)),
       ...(entry
@@ -863,8 +864,11 @@ export class CodexRuntime {
   }
   /** Protected servers whose retirement has not confirmed the process exited. */
   private readonly unretired = new Map<AgentKey, Server>();
-  private assertRetired(agent: AgentKey) {
-    if (this.unretired.has(agent))
+  private assertRetired(agent: AgentKey, protectedStart = false) {
+    if (
+      this.unretired.has(agent) ||
+      (protectedStart && this.stopping.has(agent))
+    )
       throw new Error("This agent’s previous native sessions have not retired");
   }
   /** Closes a protected server; starts for its agent stay refused until the
@@ -970,7 +974,7 @@ export class CodexRuntime {
   private open(agent?: Pick<AgentHandle, "key" | "pubkey" | "protection">) {
     if (agent?.protection) {
       const protection = agent.protection;
-      this.assertRetired(agent.key);
+      this.assertRetired(agent.key, true);
       protection.assertAvailable();
       // A prior worker with another key belongs to a replaced provider, which
       // is already stopping it; the replacement starts once it has exited.
