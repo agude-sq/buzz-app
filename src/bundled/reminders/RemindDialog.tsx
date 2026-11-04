@@ -34,8 +34,9 @@ export function RemindDialog({
   const fields = useRef<HTMLDivElement>(null);
   const [when, setWhen] = useState(TIME_PRESETS[0]?.label ?? "custom");
   const [note, setNote] = useState("");
-  const [date, setDate] = useState(todayDateString);
-  const [time, setTime] = useState("09:00");
+  const [start] = useState(defaultCustomInputs);
+  const [date, setDate] = useState(start.date);
+  const [time, setTime] = useState(start.time);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
   const notify = useToastNotification();
@@ -156,6 +157,15 @@ function fieldFocus(
       : (fields.current?.querySelector<HTMLElement>(selector) ?? null);
 }
 
+/**
+ * Where a custom time starts when there is no due time to keep: the next 9am,
+ * today's until it passes, then tomorrow's, so the fields never open on a past
+ * time.
+ */
+function defaultCustomInputs() {
+  return customInputs(nextDayAt9am(0));
+}
+
 /** Date and time inputs for a custom reminder time, with their notices. */
 function CustomTimeFields({
   date,
@@ -226,9 +236,7 @@ export function SnoozeDialog({
   finalFocus(): HTMLElement | null;
 }) {
   const fields = useRef<HTMLDivElement>(null);
-  const [start] = useState(
-    () => dueInputs(due) ?? customInputs(nextDayAt9am(0)),
-  );
+  const [start] = useState(() => dueInputs(due) ?? defaultCustomInputs());
   const [date, setDate] = useState(start.date);
   const [time, setTime] = useState(start.time);
   const [pending, setPending] = useState(false);
