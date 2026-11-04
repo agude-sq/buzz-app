@@ -166,6 +166,10 @@ that agent in Buzz; they do not notify the external app through this connection.
   you're in. Opening an unjoined channel shows a preview with **Join**. Private
   channels appear only once someone adds you. Search reopens where you left it
   for a few minutes; Escape starts fresh next time.
+- **Inbox** threads name their channel above the original message. Select that
+  name, or **Open in channel** in the thread tab's menu, to open the thread in
+  Channels beside its original message, which the channel history shows and
+  highlights.
 - **Mute** is available from a channel or DM's sidebar context menu. Once
   confirmed, a crossed-out bell appears immediately after its name. New messages
   do not make muted channel or DM names bold.
