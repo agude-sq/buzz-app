@@ -1,3 +1,5 @@
+import { setFlagsFromString } from "node:v8";
+import { runInNewContext } from "node:vm";
 import { afterEach, expect, it, vi } from "vitest";
 import {
   createAgentMemories,
@@ -220,4 +222,24 @@ it("evicts cached-only entries so cached and fresh pages stay within the entry b
   answer({ entries: [], partial: false });
   await done;
   view.dispose();
+});
+
+it("still forgets a live owner's listings on a switch after garbage collection", async () => {
+  setFlagsFromString("--expose-gc");
+  const collect = runInNewContext("gc") as () => void;
+  const communities = selection("a");
+  const stop = forgetMemoryListingsOnSelection(communities);
+  const { read, answer } = pending();
+  const owner = createAgentMemories(read, viewer, () => true);
+  await readOnce(owner, answer, listing("from-a"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  collect();
+  communities.select("b");
+  communities.select("a");
+  const back = owner.capability.open(agent);
+  void back.refresh();
+  expect(back.snapshot()).toEqual({ status: "loading" });
+  back.dispose();
+  owner.dispose();
+  stop();
 });

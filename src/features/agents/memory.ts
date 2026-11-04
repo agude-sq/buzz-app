@@ -86,16 +86,13 @@ function entryBytes(entry: MemoryEntry) {
     JSON.stringify({ slug, body, eventId, createdAt }),
   ).length;
 }
-/** Every owner's kept listings, so a community switch can forget them all. */
-const owners = new Set<WeakRef<{ forget(): void }>>();
+/** Every live owner's kept listings, so a community switch can forget them
+ * all. An owner leaves when it is disposed. */
+const owners = new Set<() => void>();
 /** Forgets every kept listing, fencing reads still in flight from keeping
  * theirs. Sessions, views and runtime reads carry on. */
 export function forgetMemoryListings() {
-  for (const ref of owners) {
-    const owner = ref.deref();
-    if (owner) owner.forget();
-    else owners.delete(ref);
-  }
+  for (const forget of owners) forget();
 }
 /** Forgets kept listings whenever the selected community changes: a retained
  * session keeps its owner, but its listings must not outlive the selection. */
@@ -200,7 +197,7 @@ export function createAgentMemories(
     for (const entry of kept.values()) clearTimeout(entry.release);
     kept.clear();
   };
-  owners.add(new WeakRef({ forget }));
+  owners.add(forget);
   function open(agent: string) {
     if (closed || views.size >= 4) throw new Error("Memory views unavailable");
     const eligible = memoryAgent(agent, viewer);
@@ -395,6 +392,7 @@ export function createAgentMemories(
       closed = true;
       generation++;
       forget();
+      owners.delete(forget);
       for (const controller of reads) controller.abort();
       for (const view of views) view.dispose();
     },
