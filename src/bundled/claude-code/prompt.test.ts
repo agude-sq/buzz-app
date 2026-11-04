@@ -3,6 +3,7 @@ import { quoted } from "../../features/agent-harness/turn-records";
 import type { ConversationWake } from "../../features/agents/service";
 import type { EventData } from "../../features/relay/events";
 import { BUZZ_PROMPT } from "../../buzz-mcp/prompt";
+import { MENTION_PROMPT } from "../../features/agent-harness/base-prompt";
 import {
   promptMessage,
   promptSections,
@@ -60,6 +61,7 @@ it.each([false, true])(
     expect(sections.map((section) => section.tag)).toEqual([
       history,
       "context",
+      "mention",
       "buzz-event",
     ]);
     expect(promptMessage(sections)).toEqual({
@@ -85,6 +87,7 @@ it.each([false, true])(
     expect(direct.map((section) => section.tag)).toEqual([
       history,
       "context",
+      "mention",
       "buzz-event",
     ]);
     expect(promptMessage(direct)).toEqual({ author: undefined, text: content });
@@ -402,4 +405,39 @@ it("always includes the Buzz tools' guidance, and leaves attention's to its tool
   const prompt = systemPrompt({ scope: "thread", cwd: "/w" });
   expect(prompt).toContain(BUZZ_PROMPT);
   expect(prompt).not.toContain("## Attention");
+});
+
+it("tells a turn a mention starts what it owes the mention, and a wake's turn nothing of the kind", () => {
+  const input = {
+    agent,
+    event: event("1", "@Claude what changed?"),
+    channel: { id: "chan", name: "general" },
+    scope: "thread" as const,
+    context: [],
+    total: 1,
+  };
+  const asked = turnPrompt(input);
+  expect(promptSections(asked).map((section) => section.tag)).toEqual([
+    "context",
+    "mention",
+    "buzz-event",
+  ]);
+  expect(asked).toContain("you MUST reply");
+  expect(steerPrompt(asked)).toContain(MENTION_PROMPT);
+  const woken = turnPrompt({
+    ...input,
+    wake: {
+      type: "attention",
+      channel: "chan",
+      text: '<watch-task>\nThis turn was started by watch "w".\n</watch-task>',
+      id: "w".repeat(64),
+      at: 1_800_000_000_000,
+    },
+  });
+  expect(woken).not.toContain("<mention>");
+  expect(woken).not.toContain("MUST reply");
+  // What a mention is owed is no longer in every turn's prompt.
+  const system = systemPrompt({ scope: "thread", cwd: "/work" });
+  expect(system).not.toContain("MUST reply");
+  expect(system).not.toContain("MUST publish");
 });
