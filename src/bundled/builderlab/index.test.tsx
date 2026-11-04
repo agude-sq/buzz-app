@@ -1061,6 +1061,14 @@ it.each([
       const beforeListing = community.events.filter(
         (event) => event.kind === 30177,
       ).length;
+      const thinking = within(createDialog).getByRole("combobox", {
+        name: "Thinking",
+      });
+      const instructions = within(createDialog).getByRole("textbox", {
+        name: "Instructions Optional",
+      });
+      const controls = [model, thinking, instructions];
+      for (const control of controls) expect(control).toBeEnabled();
       instructionsSave = deferred();
       try {
         await user.click(create);
@@ -1073,10 +1081,12 @@ it.each([
           ).toHaveLength(1),
         );
         expect(create).toBeDisabled();
+        for (const control of controls) expect(control).toBeDisabled();
         instructionsSave.reject(new Error("offline"));
         expect(
           await within(createDialog).findByRole("alert"),
         ).toHaveTextContent("Could not reach Builderlab");
+        for (const control of controls) expect(control).toBeEnabled();
         expect(agents.find(browserKey)?.unfinished).toBe(true);
         expect(
           community.events.filter((event) => event.kind === 30177),

@@ -30,7 +30,7 @@ const catalog = [
     supported_reasoning_efforts: ["none"],
   },
 ];
-async function fixture(signedIn = true, disabled = false) {
+async function fixture(signedIn = true) {
   const acquire = vi.fn(async () => ({
     value: "credential",
     account: {
@@ -73,10 +73,10 @@ async function fixture(signedIn = true, disabled = false) {
         <CreateConfiguration
           config={config}
           onChange={setConfig}
-          disabled={disabled}
+          disabled={false}
           harnessControl={null}
         />
-        <Create config={config} onChange={setConfig} disabled={disabled} />
+        <Create config={config} onChange={setConfig} disabled={false} />
         <button type="submit">Create agent</button>
       </form>
     );
@@ -128,7 +128,7 @@ it("keeps the native missing-model message and forwards input focus to Model", a
     .click(screen.getByRole("button", { name: "Create agent" }));
   expect(h.submit).not.toHaveBeenCalled();
   expect(invalid).toHaveBeenCalledOnce();
-  expect(invalid.mock.calls[0][0].defaultPrevented).toBe(false);
+  expect(invalid.mock.calls[0]?.[0].defaultPrevented).toBe(false);
   expect(input.validity.valueMissing).toBe(true);
   const message = input.validationMessage;
   expect(message).not.toBe("");
@@ -217,19 +217,6 @@ it("offers catalog families without a default or custom model action", async () 
   expect(await screen.findByRole("menuitem", { name: "OpenAI" })).toBeVisible();
   expect(screen.getByRole("menuitem", { name: "Other" })).toBeVisible();
   expect(screen.queryByText(/Default|Custom model/)).not.toBeInTheDocument();
-  expect(h.draft()).toEqual(EMPTY_CREATION);
-});
-
-it("disables model, thinking and instructions while creation is pending", async () => {
-  const h = await fixture(true, true);
-  await act(async () => h.pending.resolve());
-  expect(
-    await screen.findByRole("button", { name: "Model: Choose a model" }),
-  ).toBeDisabled();
-  expect(screen.getByRole("combobox", { name: "Thinking" })).toBeDisabled();
-  expect(
-    screen.getByRole("textbox", { name: "Instructions Optional" }),
-  ).toBeDisabled();
   expect(h.draft()).toEqual(EMPTY_CREATION);
 });
 
