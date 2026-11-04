@@ -51,7 +51,12 @@ async function openCore() {
 }
 
 function setup(
-  read: () => Promise<MemoryListing>,
+  read: (
+    agent: string,
+    signal: AbortSignal,
+    slug?: string,
+    onPage?: (page: MemoryListing) => void,
+  ) => Promise<MemoryListing>,
   communities?: CommunityReader,
 ) {
   const owner = createAgentMemories(vi.fn(read), "c".repeat(64), () => true);
@@ -205,6 +210,64 @@ it("announces that memories are loading", async () => {
     await screen.findByRole("status", { name: "Loading memories" }),
   ).toBeInTheDocument();
   expect(screen.queryByText("Loading memory…")).not.toBeInTheDocument();
+});
+
+it("shows memories as each page arrives and says more are loading", async () => {
+  let finish: (listing: MemoryListing) => void = () => {};
+  let page: ((page: MemoryListing) => void) | undefined;
+  setup((_agent, _signal, _slug, onPage) => {
+    page = onPage;
+    return new Promise((resolve) => {
+      finish = resolve;
+    });
+  });
+  await vi.waitFor(() => expect(page).toBeDefined());
+  act(() => page?.({ entries: [entry("mem/first", "One.")], partial: false }));
+  expect(
+    await screen.findByRole("button", { name: /first/ }),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Loading more memories…",
+  );
+  act(() => page?.({ entries: [entry("mem/second", "Two.")], partial: false }));
+  expect(
+    await screen.findByRole("button", { name: /second/ }),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /first/ })).toBeInTheDocument();
+  await act(async () =>
+    finish({
+      entries: [entry("mem/first", "One."), entry("mem/second", "Two.")],
+      partial: false,
+    }),
+  );
+  await vi.waitFor(() =>
+    expect(
+      screen.queryByText("Loading more memories…"),
+    ).not.toBeInTheDocument(),
+  );
+  expect(
+    screen.queryByText("Some memories couldn't be shown."),
+  ).not.toBeInTheDocument();
+});
+
+it("stops a streamed read and drops its memories when the panel closes mid-stream", async () => {
+  let signal: AbortSignal | undefined;
+  let page: ((page: MemoryListing) => void) | undefined;
+  const { owner, unmount } = setup((_agent, aborted, _slug, onPage) => {
+    signal = aborted;
+    page = onPage;
+    return new Promise(() => {});
+  });
+  await vi.waitFor(() => expect(page).toBeDefined());
+  act(() => page?.({ entries: [entry("mem/first", "One.")], partial: false }));
+  await screen.findByRole("button", { name: /first/ });
+  unmount();
+  expect(signal?.aborted).toBe(true);
+  // A page landing after the close is not kept anywhere.
+  const view = owner.capability.open(pubkey);
+  page?.({ entries: [entry("mem/late", "Late.")], partial: false });
+  expect(view.snapshot().listing).toBeUndefined();
+  view.dispose();
 });
 
 it("shows memories newest first without a sorting control", async () => {

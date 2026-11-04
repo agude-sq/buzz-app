@@ -159,7 +159,7 @@ export function MemoryPanel({
   ) : null;
   return (
     <div className="grid min-w-0 grid-cols-1 content-start gap-6">
-      {status === "ready" && listing ? (
+      {(status === "ready" || status === "loading") && listing ? (
         <>
           <MemorySection
             title="Core memories"
@@ -181,13 +181,26 @@ export function MemoryPanel({
             emptyIcon={<BrainIcon size={24} aria-hidden="true" />}
             refreshing={refreshing}
           />
-          {listing.partial && (
-            <div className="flex items-center justify-between gap-2">
-              <p className="m-0 text-body-sm text-secondary">
-                Some memories couldn't be shown.
-              </p>
-              {refreshButton}
+          {status === "loading" ? (
+            <div
+              role="status"
+              className="flex items-center gap-2 text-body-sm text-secondary"
+            >
+              <CircleNotchIcon
+                className="motion-safe:animate-spin"
+                aria-hidden="true"
+              />
+              Loading more memories…
             </div>
+          ) : (
+            listing.partial && (
+              <div className="flex items-center justify-between gap-2">
+                <p className="m-0 text-body-sm text-secondary">
+                  Some memories couldn't be shown.
+                </p>
+                {refreshButton}
+              </div>
+            )
           )}
         </>
       ) : status === "loading" ? (

@@ -20,13 +20,16 @@ export interface MemoryListing {
   deleted?: readonly Readonly<{ slug: string; createdAt: number }>[];
   partial: boolean;
 }
-/** Reads every entry, or only entry `slug` when given. */
+/** Reads every entry, or only entry `slug` when given. With `onPage`, a
+ * reader may report the entries each page adds or changes as it lands. */
 export type MemoryReader = (
   agent: string,
   signal: AbortSignal,
   slug?: string,
+  onPage?: (page: MemoryListing) => void,
 ) => Promise<MemoryListing>;
 export type MemorySnapshot = Readonly<{
+  /** `loading` may carry the entries read so far. */
   status:
     | "idle"
     | "blocked"
@@ -185,12 +188,30 @@ export function createAgentMemories(
         publish({ status: "loading" });
         try {
           owned.signal.throwIfAborted();
-          const signal = AbortSignal.any([
-            owned.signal,
-            AbortSignal.timeout(10000),
-          ]);
+          const signal = owned.signal;
           const listing = memoryListing(
-            await retryRead((signal) => source(agent, signal), signal),
+            await retryRead((signal) => {
+              // Each attempt starts its own listing; a page names its slugs'
+              // newest heads, so a later page's entry replaces an earlier one.
+              const heads = new Map<string, MemoryEntry | undefined>();
+              return source(agent, signal, undefined, (page) => {
+                if (signal.aborted || !available()) return;
+                for (const entry of page.entries) heads.set(entry.slug, entry);
+                for (const entry of page.deleted ?? [])
+                  heads.set(entry.slug, undefined);
+                publish({
+                  status: "loading",
+                  listing: Object.freeze({
+                    entries: Object.freeze(
+                      [...heads.values()]
+                        .filter((entry) => entry !== undefined)
+                        .sort((a, b) => a.slug.localeCompare(b.slug)),
+                    ),
+                    partial: true,
+                  }),
+                });
+              });
+            }, signal),
           );
           signal.throwIfAborted();
           if (!owned.signal.aborted)
