@@ -1762,7 +1762,7 @@ it("collapses Working command details", async () => {
   expect(screen.getByText("Latest activity")).toBeVisible();
 });
 
-it("shows why the conversation it was opened from failed, as plain text", () => {
+it("shows why the conversation it was opened from failed, as plain text", async () => {
   const key = JSON.stringify(["channel", "channel"]);
   const f = fixture({
     saved: { [key]: { threadId: "current", workspace: "/w", at: 1 } },
@@ -1778,7 +1778,7 @@ it("shows why the conversation it was opened from failed, as plain text", () => 
       conversation={{ channelId: "channel" }}
     />,
   );
-  const opened = screen.getByRole("region", { name: "This channel" });
+  const opened = await screen.findByRole("region", { name: "This channel" });
   expect(within(opened).getByText(/^Needs attention/)).toBeVisible();
   const reason = within(opened).getByText(detail);
   expect(reason).toBeVisible();
