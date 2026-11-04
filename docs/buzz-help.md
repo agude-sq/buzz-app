@@ -139,7 +139,10 @@ that agent in Buzz; they do not notify the external app through this connection.
   replaces a newer New chat draft or a later Reset. Reloading or dismissing that
   notice ends this recovery option.
   Solo chats can also be shared with other people; do not describe every Solo
-  chat as visible only to its creator.
+  chat as visible only to its creator. In a Solo chat, including its first
+  message, **@** can name anyone in the community. A tagged agent of yours joins
+  the chat; anyone else is only named: not added and not notified, and the
+  picker row says so. The toolbar's agent menu lists agents only.
 - **Team** contains community channels and their threads. Use the **@** picker
   to address a channel member. Typing a name alone does not guarantee a
   notification. Selecting someone outside the channel does not grant access;
