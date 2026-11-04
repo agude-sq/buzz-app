@@ -41,6 +41,7 @@ import type { InviteLink } from "../features/communities/invite-link";
 import { connectNativeTransport } from "../features/relay/native";
 import { createUpdates } from "../features/updates/updates";
 import { PanelsService } from "../features/panels/service";
+import { BackdropsService } from "../features/backdrops/service";
 import { Context } from "@deepseek-ai/cordis";
 import { BrowserService } from "../features/browser/service";
 import { PagesService } from "../features/pages/service";
@@ -95,6 +96,7 @@ export function createServices() {
   });
   createPluginInstallerService(ctx, { core: pluginInstallCore });
   const panels = new PanelsService(ctx);
+  const backdrops = new BackdropsService(ctx);
   const accountActions = new AccountActionsService(ctx);
   const conversation = new ConversationService(ctx);
   const settingsCards = new SettingsCardsService(ctx);
@@ -255,6 +257,7 @@ export function createServices() {
     sidebarSections,
     pluginInstallRequests,
     panels,
+    backdrops,
     plugins,
     federatedIdentity,
     firstRunFederatedIdentity,
