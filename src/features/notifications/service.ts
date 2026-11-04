@@ -482,7 +482,8 @@ export class NotificationsService extends Service implements Notifications {
           activate,
           (error, stage = "delivery") => {
             if (stage === "activation") {
-              this.reportError(error);
+              if (!this.closed && generation === this.generation)
+                this.reportError(error);
               return;
             }
             // Native failure can arrive before `show` resolves. Cancellation is

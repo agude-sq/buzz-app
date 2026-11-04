@@ -221,6 +221,16 @@ it("reports activation failures without showing a delivery fallback", async () =
   expect(t.service.snapshot().error).toBe("Window focus failed");
   expect(t.navigation.navigation.snapshot().entry.target).toEqual(target);
 });
+it("ignores activation failures owned by a previous account", async () => {
+  const t = setup();
+  const fallback = vi.fn();
+  await t.submit("old-account-activation", () => true, fallback);
+  await flush();
+  t.service.selectViewer("b".repeat(64));
+  t.failures[0]?.(new Error("Old account focus failed"), "activation");
+  expect(fallback).not.toHaveBeenCalled();
+  expect(t.service.snapshot().error).toBeNull();
+});
 it("an off/on transition during a permission probe cancels the old candidate", async () => {
   const t = setup();
   await flush();
