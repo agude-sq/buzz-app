@@ -1,3 +1,5 @@
+import type { Attachment } from "../relay/contracts";
+
 /** Only the URLs emitted by convertFileSrc(relayMediaUrl, "buzz-media"). */
 export function isNativeMediaSource(source: string): boolean {
   try {
@@ -61,4 +63,16 @@ export function safeOpenUrl(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** PROTOTYPE (gallery-prototype.ts): the signed or relay thumbnail of a gallery
+ * image, or undefined when it would just be the original again. */
+export function attachmentPreview(
+  attachment: Attachment,
+  media: (url: string, size?: "small") => string | undefined,
+): string | undefined {
+  const preview = attachment.previewUrl
+    ? media(attachment.previewUrl)
+    : media(attachment.url, "small");
+  return preview !== media(attachment.url) ? preview : undefined;
 }

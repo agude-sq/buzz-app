@@ -1,9 +1,17 @@
 import { useImageGalleryMotion } from "./use-image-gallery-motion";
+import {
+  usePrefetchedPreviews,
+  useWarmOriginals,
+  warmable,
+} from "./use-gallery-preload";
+import { galleryPrototype } from "./gallery-prototype";
+import { BLURHASH_SIZE, paintBlurhash } from "./blurhash";
 import { MIN_ZOOM, useImageViewport } from "./use-image-viewport";
 import { useMediaControls } from "./use-media-controls";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
+  Fragment,
   useCallback,
   useEffect,
   useId,
@@ -45,7 +53,13 @@ type ImageReviewStageProps = {
   select(url: string): void;
   onOpenLink(url: string): boolean;
   allowCopy?: boolean;
+  /** Smaller rendition of the same picture, shown while the original loads. */
+  preview?(attachment: Attachment): string | undefined;
 };
+
+type Preview =
+  | { kind: "thumbnail"; source: string }
+  | { kind: "frame"; width: number; height: number; hash: string | undefined };
 
 export function ImageReviewStage({
   attachments,
@@ -54,7 +68,18 @@ export function ImageReviewStage({
   select,
   onOpenLink,
   allowCopy = true,
+  preview,
 }: ImageReviewStageProps) {
+  // PROTOTYPE: read once so a running transition never changes strategy. Only
+  // the message viewer, which supplies previews, takes part.
+  const [prototype] = useState(() =>
+    preview ? galleryPrototype() : "current",
+  );
+  const progressive =
+    prototype === "placeholder" ||
+    prototype === "thumbnail" ||
+    prototype === "thumbnail+preload";
+  const thumbnails = prototype !== "placeholder" && progressive && preview;
   const stage = useRef<HTMLDivElement>(null);
   const image = useRef<HTMLImageElement>(null);
   const previousButton = useRef<HTMLButtonElement>(null);
@@ -85,6 +110,74 @@ export function ImageReviewStage({
     void source;
     if (press.current) press.current.click = false;
   }, [source]);
+  // PROTOTYPE: whether the original decoded (`instant` when it was cached).
+  const [settled, setSettled] = useState<{
+    source: string;
+    instant: boolean;
+    failed?: true;
+  }>();
+  const ready = !!source && settled?.source === source && !settled.failed;
+  useLayoutEffect(() => {
+    const incoming = image.current;
+    if (prototype === "current" || !incoming || !source) return;
+    if (incoming.complete && incoming.naturalWidth) {
+      setSettled({ source, instant: true });
+      return;
+    }
+    let active = true;
+    // A failed original keeps its preview.
+    const failed = () =>
+      active && setSettled({ source, instant: false, failed: true });
+    const loaded = () =>
+      void incoming
+        .decode()
+        .then(() => active && setSettled({ source, instant: false }), failed);
+    incoming.addEventListener("load", loaded);
+    incoming.addEventListener("error", failed);
+    return () => {
+      active = false;
+      incoming.removeEventListener("load", loaded);
+      incoming.removeEventListener("error", failed);
+    };
+  }, [prototype, source]);
+  const previewOf = (item: Attachment | undefined): Preview | undefined => {
+    if (!progressive || !item) return undefined;
+    const thumbnail = thumbnails ? thumbnails(item) : undefined;
+    if (thumbnail) return { kind: "thumbnail", source: thumbnail };
+    const { width = 0, height = 0 } = item.dimensions ?? {};
+    if (!(width > 0 && height > 0)) return undefined;
+    // A raster in the original's ratio, so `object-fit: contain` matches it.
+    const scale = BLURHASH_SIZE / Math.max(width, height);
+    return {
+      kind: "frame",
+      width: Math.max(1, Math.round(width * scale)),
+      height: Math.max(1, Math.round(height * scale)),
+      hash: item.blurhash,
+    };
+  };
+  const travel = useRef(1);
+  usePrefetchedPreviews(
+    thumbnails ? attachments.flatMap((item) => thumbnails(item) ?? []) : [],
+  );
+  useWarmOriginals(
+    prototype === "thumbnail+preload"
+      ? attachments.map((item) =>
+          warmable(item) ? media(item.url) : undefined,
+        )
+      : undefined,
+    selectedIndex,
+    travel,
+  );
+  // PROTOTYPE `pending`: delayed status while a stale picture stays on screen.
+  const pending =
+    prototype === "pending" && !!source && settled?.source !== source;
+  const [pendingVisible, setPendingVisible] = useState(false);
+  useEffect(() => {
+    setPendingVisible(false);
+    if (!pending) return;
+    const timer = window.setTimeout(() => setPendingVisible(true), 1000);
+    return () => window.clearTimeout(timer);
+  }, [pending]);
   const nativeSource = source ? isNativeMediaSource(source) : false;
   const proxySource = source ? isProxySource(source) || nativeSource : false;
   const [downloadFeedbackVisible, setDownloadFeedbackVisible] = useState(false);
@@ -107,7 +200,8 @@ export function ImageReviewStage({
     constrain,
   } = useImageViewport(stage, image, source);
   const copyFeedbackVisible = copying || copyNotice !== undefined;
-  const feedbackVisible = copyFeedbackVisible || downloadFeedbackVisible;
+  const feedbackVisible =
+    copyFeedbackVisible || downloadFeedbackVisible || pendingVisible;
   const idle = useMediaControls(stage, source, feedbackVisible);
   const pannable = zoom > 1;
   const nextZoom = ZOOM_PRESETS.find((preset) => preset > zoom) ?? MIN_ZOOM;
@@ -116,6 +210,7 @@ export function ImageReviewStage({
     image,
     selected?.url,
     source,
+    progressive,
   );
 
   const clearCopyNoticeTimer = useCallback(() => {
@@ -165,7 +260,8 @@ export function ImageReviewStage({
     (index: number) => {
       const item = attachments[index];
       if (!item || item.url === selected?.url) return;
-      prepare(index > selectedIndex ? 1 : -1);
+      travel.current = index > selectedIndex ? 1 : -1;
+      prepare(travel.current, ready);
       setBoundedZoom(1);
       clearCopyNotice();
       const active = document.activeElement;
@@ -182,6 +278,7 @@ export function ImageReviewStage({
       selected?.url,
       selectedIndex,
       prepare,
+      ready,
       clearCopyNotice,
     ],
   );
@@ -240,6 +337,7 @@ export function ImageReviewStage({
       data-controls-idle={idle || undefined}
       data-controls-revealed={feedbackVisible || undefined}
       data-review-zoomed={zoom !== 1 || undefined}
+      data-gallery-prototype={prototype}
       className={`${styles.imageReviewStage} ${pannable ? styles.imageReviewPannable : ""} ${dragging ? styles.imageReviewDragging : ""}`}
       onPointerDown={(event) => {
         if (event.button !== 0) return;
@@ -292,6 +390,7 @@ export function ImageReviewStage({
         {
           url: selected.url,
           source,
+          settled: ready,
           transform:
             zoom === 1
               ? "none"
@@ -299,21 +398,39 @@ export function ImageReviewStage({
         },
       ].map((item) => {
         const current = item.url === selected.url;
+        const look = previewOf(attachments.find(({ url }) => url === item.url));
+        // A cached original never shows its preview; a loaded one fades it out.
+        const covered =
+          !!look && (current ? !(ready && settled?.instant) : !item.settled);
         return item.source ? (
-          <img
-            key={item.url}
-            ref={current ? image : undefined}
-            data-review-media={current ? "" : undefined}
-            data-gallery-departing={!current ? "" : undefined}
-            data-review-chrome={!current ? "" : undefined}
-            src={item.source}
-            alt={current ? "Attachment preview" : ""}
-            aria-describedby={current ? zoomHint : undefined}
-            aria-hidden={!current || undefined}
-            draggable={false}
-            onLoad={current ? constrain : undefined}
-            style={{ transform: item.transform }}
-          />
+          <Fragment key={item.url}>
+            <img
+              ref={current ? image : undefined}
+              data-review-media={current ? "" : undefined}
+              data-gallery-departing={!current ? "" : undefined}
+              data-review-chrome={!current ? "" : undefined}
+              src={item.source}
+              alt={current ? "Attachment preview" : ""}
+              aria-describedby={current ? zoomHint : undefined}
+              aria-hidden={!current || undefined}
+              draggable={false}
+              fetchPriority={
+                current && prototype === "thumbnail+preload"
+                  ? "high"
+                  : undefined
+              }
+              onLoad={current ? constrain : undefined}
+              style={{ transform: item.transform }}
+            />
+            {covered && look && (
+              <GalleryPreview
+                look={look}
+                departing={!current}
+                ready={current && ready}
+                transform={item.transform}
+              />
+            )}
+          </Fragment>
         ) : (
           <p
             key={item.url}
@@ -398,6 +515,7 @@ export function ImageReviewStage({
             icon={<CopyIcon size={17} aria-hidden="true" />}
           />
         )}
+        {pendingVisible && <span role="status">Loading image…</span>}
         {copyNotice && (
           <span role={copyNotice === "error" ? "alert" : "status"}>
             {copyNotice === "success" ? "Image copied" : "Couldn't copy image"}
@@ -446,5 +564,53 @@ export function ImageReviewStage({
         )}
       </div>
     </div>
+  );
+}
+
+/** PROTOTYPE: a stand-in drawn with the original's geometry. */
+function GalleryPreview({
+  look,
+  departing,
+  ready,
+  transform,
+}: {
+  look: Preview;
+  departing: boolean;
+  ready: boolean;
+  transform: string;
+}) {
+  const canvas = useRef<HTMLCanvasElement>(null);
+  const [failed, setFailed] = useState(false);
+  const { width = 0, height = 0, hash } = look.kind === "frame" ? look : {};
+  useLayoutEffect(() => {
+    const element = canvas.current;
+    const context = element?.getContext("2d");
+    if (!element || !context) return;
+    // The fill stays when there is no blurhash or it cannot be painted.
+    context.fillStyle = getComputedStyle(element).color;
+    context.fillRect(0, 0, width, height);
+    if (hash) paintBlurhash(element, hash, width, height);
+  }, [hash, width, height]);
+  const shared = {
+    "data-gallery-preview":
+      look.kind === "thumbnail" ? "thumbnail" : look.hash ? "blurhash" : "fill",
+    "data-gallery-departing": departing ? "" : undefined,
+    "data-gallery-ready": ready ? "" : undefined,
+    "data-review-chrome": "",
+    "aria-hidden": true,
+    style: { transform },
+  } as const;
+  if (look.kind === "thumbnail")
+    return failed ? null : (
+      <img
+        {...shared}
+        src={look.source}
+        alt=""
+        draggable={false}
+        onError={() => setFailed(true)}
+      />
+    );
+  return (
+    <canvas {...shared} ref={canvas} width={look.width} height={look.height} />
   );
 }

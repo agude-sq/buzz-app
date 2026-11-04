@@ -47,6 +47,7 @@ import { VideoReviewReactions } from "./VideoReviewReactions";
 import styles from "./Messages.module.css";
 import { MediaReviewFrame } from "./MediaReviewFrame";
 import { avatarMedia } from "../../shared/avatar-source";
+import { attachmentPreview } from "./attachment-source";
 import { LinkThreadTabContext } from "../conversation/LinkLabelContext";
 
 type MediaReviewViewerProps = {
@@ -577,6 +578,7 @@ function ReviewShell({
           selectedUrl={mixedGallery ? attachment.url : selectedImageUrl}
           select={setSelectedImageUrl}
           media={session.media}
+          preview={(item) => attachmentPreview(item, session.media)}
           onOpenLink={onOpenLink}
         />
       )}

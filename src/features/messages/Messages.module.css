@@ -2820,6 +2820,46 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 .imageReviewStage[data-gallery-loading] > img[data-review-media] {
   visibility: hidden;
 }
+/* PROTOTYPE (gallery-prototype.ts): loading strategies under comparison. */
+.imageReviewStage[data-gallery-prototype="pending"]
+> img[data-gallery-departing] {
+  transition: opacity var(--duration-state) var(--easing-state);
+}
+.imageReviewStage[data-gallery-prototype="pending"][data-gallery-loading]
+  > img[data-gallery-departing] {
+  opacity: 0.45;
+}
+.imageReviewStage > [data-gallery-preview] {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  transform-origin: center;
+  pointer-events: none;
+  /* No designer-chosen media placeholder role yet; the track fill reads on black. */
+  color: var(--bg-media-track);
+  transition: opacity var(--duration-state) var(--easing-state);
+}
+.imageReviewStage > [data-gallery-preview][data-gallery-departing] {
+  z-index: 1;
+}
+/* Fixed, never animated: an upscaled 320px JPEG reads as a deliberate blur-up
+   instead of a low-quality picture with ringing and aliased detail. */
+.imageReviewStage > [data-gallery-preview="thumbnail"] {
+  filter: blur(6px);
+}
+.imageReviewStage > [data-gallery-preview][data-gallery-ready] {
+  opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .imageReviewStage > [data-gallery-preview],
+  .imageReviewStage[data-gallery-prototype="pending"]
+    > img[data-gallery-departing] {
+    transition: none;
+  }
+}
 
 /* Focus the gallery/dialog itself for navigation; interactive controls keep their rings. */
 .imageReviewStage:focus,

@@ -12,18 +12,22 @@ type DepartingImage = {
   source: string;
   transform: string;
   direction: number;
+  /** Its original was showing; otherwise its preview departs with it. */
+  settled: boolean;
 };
 
-/** Keep the outgoing DOM image alive until its replacement can slide into view. */
+/** Keep the outgoing DOM image alive until its replacement can slide into view.
+ * PROTOTYPE: a `progressive` stage slides at once, previews moving with images. */
 export function useImageGalleryMotion(
   stage: RefObject<HTMLDivElement | null>,
   image: RefObject<HTMLImageElement | null>,
   url: string | undefined,
   source: string | undefined,
+  progressive = false,
 ) {
   const [departing, setDeparting] = useState<DepartingImage>();
   const prepare = useCallback(
-    (direction: number) => {
+    (direction: number, settled = true) => {
       if (
         !url ||
         !source ||
@@ -34,25 +38,34 @@ export function useImageGalleryMotion(
       }
       // Rapid navigation while loading should keep the last decoded picture.
       const previous =
-        stage.current?.hasAttribute("data-gallery-loading") && departing
+        !progressive &&
+        stage.current?.hasAttribute("data-gallery-loading") &&
+        departing
           ? departing
           : {
               url,
               source,
+              settled,
               transform: image.current
                 ? getComputedStyle(image.current).transform
                 : "none",
             };
       setDeparting({ ...previous, direction });
     },
-    [url, source, stage, image, departing],
+    [url, source, stage, image, departing, progressive],
   );
   useLayoutEffect(() => {
     if (!departing) return;
     const container = stage.current;
     const incoming = image.current;
-    const outgoing = container?.querySelector<HTMLElement>(
-      "[data-gallery-departing]",
+    const outgoing = Array.from(
+      container?.querySelectorAll<HTMLElement>("[data-gallery-departing]") ??
+        [],
+    );
+    const arriving = Array.from(
+      container?.querySelectorAll<HTMLElement>(
+        "[data-gallery-preview]:not([data-gallery-departing])",
+      ) ?? [],
     );
     const reducedMotion = window.matchMedia?.(
       "(prefers-reduced-motion: reduce)",
@@ -61,7 +74,7 @@ export function useImageGalleryMotion(
       departing.url === url ||
       !container ||
       !incoming?.animate ||
-      !outgoing ||
+      !outgoing.length ||
       reducedMotion?.matches
     ) {
       setDeparting(undefined);
@@ -78,38 +91,47 @@ export function useImageGalleryMotion(
       }
     };
     const finish = () => {
-      outgoing.style.visibility = "hidden";
+      for (const element of outgoing) element.style.visibility = "hidden";
       clear();
       setDeparting((current) => (current === departing ? undefined : current));
     };
     const start = () => {
       if (cancelled) return;
+      // A dimmed stale picture leaves from its current opacity.
+      const opacities = outgoing.map((element) =>
+        Number(getComputedStyle(element).opacity || 1),
+      );
       delete container.dataset.galleryLoading;
       const distance = departing.direction * galleryMotion.distance;
       const timing = {
         duration: galleryMotion.duration * 1000,
         easing: `cubic-bezier(${galleryMotion.ease.join(",")})`,
       };
-      animations.push(
-        outgoing.animate(
+      for (const [index, element] of outgoing.entries())
+        animations.push(
+          element.animate(
+            [
+              { translate: "0px 0px", opacity: opacities[index] ?? 1 },
+              { translate: `${-distance}px 0px`, opacity: 0 },
+            ],
+            { ...timing, fill: "forwards" },
+          ),
+        );
+      const [arrival, ...previews] = [incoming, ...arriving].map((element) =>
+        element.animate(
           [
+            { translate: `${distance}px 0px`, opacity: 0 },
             { translate: "0px 0px", opacity: 1 },
-            { translate: `${-distance}px 0px`, opacity: 0 },
           ],
-          { ...timing, fill: "forwards" },
+          timing,
         ),
       );
-      const arrival = incoming.animate(
-        [
-          { translate: `${distance}px 0px`, opacity: 0 },
-          { translate: "0px 0px", opacity: 1 },
-        ],
-        timing,
-      );
-      animations.push(arrival);
-      arrival.onfinish = finish;
+      if (arrival) {
+        animations.push(arrival, ...previews);
+        arrival.onfinish = finish;
+      }
     };
-    if (incoming.complete) start();
+    if (progressive || incoming.complete) start();
     else {
       container.dataset.galleryLoading = "";
       incoming.addEventListener("load", start, { once: true });
@@ -124,6 +146,6 @@ export function useImageGalleryMotion(
       window.removeEventListener("resize", finish);
       reducedMotion?.removeEventListener("change", finish);
     };
-  }, [stage, image, url, departing]);
+  }, [stage, image, url, departing, progressive]);
   return { departing, prepare };
 }
