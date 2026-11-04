@@ -106,7 +106,7 @@ export function endOfToday() {
 }
 
 /** The given day offset at 9am local, rolled forward a day if already past. */
-function nextDayAt9am(dayOffset: number) {
+export function nextDayAt9am(dayOffset: number) {
   const now = new Date();
   const target = new Date(now);
   target.setDate(target.getDate() + dayOffset);
@@ -133,13 +133,19 @@ const dateString = (date: Date) =>
 /** Today as local `YYYY-MM-DD`, for the custom date input. */
 export const todayDateString = () => dateString(new Date());
 
+/** A time as local custom date and time values. */
+export function customInputs(at: number) {
+  const due = new Date(at * 1000);
+  return { date: dateString(due), time: due.toTimeString().slice(0, 5) };
+}
+
 /** A due time as custom date and time values, while that minute is still ahead. */
 export function dueInputs(at: number | undefined) {
   if (at === undefined || !isDisplayable(at)) return undefined;
-  const due = new Date(at * 1000);
-  const date = dateString(due);
-  const time = due.toTimeString().slice(0, 5);
-  return parseCustomDateTime(date, time) === null ? undefined : { date, time };
+  const inputs = customInputs(at);
+  return parseCustomDateTime(inputs.date, inputs.time) === null
+    ? undefined
+    : inputs;
 }
 
 /** A strictly future local date and time in unix seconds, or null. */

@@ -16,7 +16,7 @@ import type { RelaySession } from "../../features/relay/session";
 import { keypair, signed } from "../../features/relay/testing";
 import userEvent from "@testing-library/user-event";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
-import { formatDue, nowSeconds, todayDateString } from "./model";
+import { formatDue, nowSeconds } from "./model";
 import { RemindDialog, SnoozeDialog } from "./RemindDialog";
 
 afterEach(() => {
@@ -320,7 +320,7 @@ it("confirms a saved reminder with its due time", async () => {
   );
 });
 
-it("starts a custom snooze at the reminder's due time while it is ahead", () => {
+it("starts a custom snooze at the reminder's due time while it is ahead, else the next 9am", () => {
   const snooze = (due: number | undefined) =>
     render(
       <SnoozeDialog
@@ -336,14 +336,26 @@ it("starts a custom snooze at the reminder's due time while it is ahead", () => 
   expect(screen.getByLabelText("Reminder time")).toHaveValue("16:15");
   expect(screen.queryByRole("status")).toBeNull();
   expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
-  // A past or undisplayable due time starts from today at 9am.
-  for (const due of [nowSeconds() - 60, 8_640_000_000_001, undefined]) {
-    cleanup();
-    snooze(due);
-    expect(screen.getByLabelText("Reminder date")).toHaveValue(
-      todayDateString(),
-    );
-    expect(screen.getByLabelText("Reminder time")).toHaveValue("09:00");
+  // A past or undisplayable due time starts from the next 9am: today's until
+  // it passes, then tomorrow's, so Custom… never opens on a past time.
+  for (const [clock, date] of [
+    ["2026-11-04T08:30", "2026-11-04"],
+    ["2026-11-04T09:00", "2026-11-05"],
+    ["2026-11-04T17:45", "2026-11-05"],
+  ] as const) {
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date(clock) });
+    try {
+      for (const due of [nowSeconds() - 60, 8_640_000_000_001, undefined]) {
+        cleanup();
+        snooze(due);
+        expect(screen.getByLabelText("Reminder date")).toHaveValue(date);
+        expect(screen.getByLabelText("Reminder time")).toHaveValue("09:00");
+        expect(screen.queryByRole("status")).toBeNull();
+        expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
   }
 });
 

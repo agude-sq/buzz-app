@@ -465,13 +465,15 @@ function ReminderSections({
           save={(notBefore) => reminders.snooze(snoozing.id, notBefore)}
           close={() => setSnoozing(undefined)}
           // The reminder's trigger in whichever row shows it now, not one
-          // leaving its old group.
+          // leaving its old group. If the reminder left the page meanwhile,
+          // the list, whose first tabbable control Base UI focuses.
           finalFocus={() =>
             Array.from(
               sections.current?.querySelectorAll<HTMLElement>(
                 "li:not([inert]) [data-snooze]",
               ) ?? [],
-            ).find((trigger) => trigger.dataset.snooze === snoozing.id) ?? null
+            ).find((trigger) => trigger.dataset.snooze === snoozing.id) ??
+            sections.current
           }
         />
       )}

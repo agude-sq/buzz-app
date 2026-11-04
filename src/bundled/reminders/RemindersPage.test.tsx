@@ -15,7 +15,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, assert, expect, it, vi } from "vitest";
 import type { RelayEvent } from "../../features/relay/events";
 import {
   createReminders,
@@ -304,6 +304,45 @@ it("snoozes to a custom future time, keeping the entry when the save fails", asy
   ).getByRole("button", { name: "Snooze: Ada" });
   expect(moved).not.toBe(trigger);
   await waitFor(() => expect(moved).toHaveFocus());
+});
+
+it("keeps focus in the list when a custom snooze's reminder leaves the page", async () => {
+  const user = userEvent.setup();
+  const kept = reminder("kept", "pending", 2, now + 900);
+  let state = {
+    status: "ready" as const,
+    reminders: [reminder("due soon", "pending", 1, now + 600), kept],
+  };
+  const listeners = new Set<() => void>();
+  page({
+    snapshot: () => state,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    snooze: vi.fn(),
+  } as unknown as Reminders);
+  const [trigger] = screen.getAllByRole("button", { name: "Snooze: Ada" });
+  assert(trigger);
+  await user.click(trigger);
+  await user.click(await screen.findByRole("menuitem", { name: "Custom…" }));
+  const dialog = await screen.findByRole("dialog", { name: "Snooze reminder" });
+  // Another device cancels the reminder while its dialog is open.
+  act(() => {
+    state = {
+      ...state,
+      reminders: [reminder("due soon", "cancelled", 1, now + 600), kept],
+    };
+    for (const listener of listeners) listener();
+  });
+  await waitFor(() => expect(trigger).not.toBeInTheDocument());
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await waitFor(() =>
+    expect(screen.getByRole("listitem")).toContainElement(
+      document.activeElement as HTMLElement,
+    ),
+  );
 });
 
 it("offers Undo after Cancel, restoring the old due time", async () => {

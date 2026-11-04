@@ -11,8 +11,10 @@ import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import {
   TIME_PRESETS,
+  customInputs,
   dueInputs,
   formatDue,
+  nextDayAt9am,
   parseCustomDateTime,
   shiftedFrom,
   todayDateString,
@@ -207,7 +209,8 @@ function CustomTimeFields({
 
 /**
  * Snooze's Custom…: moves a reminder to a date and time the person enters,
- * starting from its current due time while that is still ahead.
+ * starting from its current due time while that is still ahead, otherwise the
+ * next 9am, so an Overdue or Done reminder never opens on a past time.
  */
 export function SnoozeDialog({
   title,
@@ -224,7 +227,7 @@ export function SnoozeDialog({
 }) {
   const fields = useRef<HTMLDivElement>(null);
   const [start] = useState(
-    () => dueInputs(due) ?? { date: todayDateString(), time: "09:00" },
+    () => dueInputs(due) ?? customInputs(nextDayAt9am(0)),
   );
   const [date, setDate] = useState(start.date);
   const [time, setTime] = useState(start.time);
