@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Header } from "../../shared/design-system/ui/Header";
-import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
+import { Select } from "../../shared/design-system/ui/Select";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { loadPolicy, open, parse, savePolicy, type Rule } from "./authors";
@@ -62,15 +62,13 @@ export function AuthorSettings({
           )}
           {open(saved) && (
             <p role="status" className="m-0 text-body-sm text-subtle">
-              Comments from anyone no rule denies can wake your agents. To limit
-              them, allow only org:name or author:login, and don’t wake them
-              when no rule matches.
+              Comments from anyone no rule denies can wake your agents.
             </p>
           )}
           <Field
             label="Rules"
             error={checked && typeof parsed === "string" ? parsed : undefined}
-            description="One per line: allow or deny, then any of author:login, author:/pattern/, org:organization, body:/pattern/ and prefix:text, which runs to the end of the line. Patterns are JavaScript regular expressions without backreferences, lookaround or escapes JavaScript reads as plain letters, such as \q. body: sees a comment's first 1,000 characters, the most a wake quotes. A bare allow or deny matches everyone. author:@me is your GitHub account, a bot's login ends in [bot], and logins match case aside. The first rule that matches decides. Membership your GitHub account cannot see, or of a misspelled organization, counts as none."
+            description="One rule per line. The first rule that matches decides."
           >
             <Textarea
               rows={6}
@@ -84,16 +82,47 @@ export function AuthorSettings({
               }}
             />
           </Field>
-          <Field label="When no rule matches" nativeLabel={false}>
-            <RadioGroup<Rule["effect"]>
-              aria-label="When no rule matches"
-              value={fallback}
-              onValueChange={setFallback}
-            >
-              <Radio value="allow" label="Wake the agent" />
-              <Radio value="deny" label="Don’t wake it" />
-            </RadioGroup>
-          </Field>
+          <details className="text-body-sm text-subtle">
+            <summary>Rule syntax</summary>
+            <ul className="m-0 mt-2 flex flex-col gap-1 pl-5">
+              <li>
+                allow or deny, then any of author:login, author:/pattern/,
+                org:organization, body:/pattern/ and prefix:text, which runs to
+                the end of the line. A bare allow or deny matches everyone.
+              </li>
+              <li>
+                author:@me is your GitHub account, a bot’s login ends in [bot],
+                and logins match case aside.
+              </li>
+              <li>
+                body: sees a comment’s first 1,000 characters, the most a wake
+                quotes.
+              </li>
+              <li>
+                Patterns are JavaScript regular expressions without
+                backreferences, lookaround or escapes JavaScript reads as plain
+                letters, such as \q.
+              </li>
+              <li>
+                Membership your GitHub account cannot see, or of a misspelled
+                organization, counts as none.
+              </li>
+            </ul>
+          </details>
+          <Select
+            label="When no rule matches"
+            value={fallback}
+            groups={[
+              {
+                label: "",
+                options: [
+                  { value: "allow", label: "Wake the agent" },
+                  { value: "deny", label: "Don’t wake it" },
+                ],
+              },
+            ]}
+            onValueChange={(value) => setFallback(value as Rule["effect"])}
+          />
           {error && (
             <p role="alert" className="m-0 text-body-sm text-danger">
               {error}

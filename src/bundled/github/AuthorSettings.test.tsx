@@ -7,6 +7,16 @@ import { AuthorSettings } from "./AuthorSettings";
 import { DEFAULT_RULES, loadPolicy, POLICY_KEY } from "./authors";
 import { GhUnavailable, GitHubError, type GitHubCli } from "./gh";
 
+const fallback = () =>
+  screen.getByRole("combobox", { name: "When no rule matches" });
+const choose = async (
+  user: ReturnType<typeof userEvent.setup>,
+  name: string,
+) => {
+  await user.click(fallback());
+  await user.click(await screen.findByRole("option", { name }));
+};
+
 afterEach(() => {
   cleanup();
   localStorage.clear();
@@ -18,7 +28,7 @@ it("shows the default rules, and saves only rules that parse", async () => {
   expect(screen.getByRole("status")).toHaveTextContent(
     "Comments from anyone no rule denies can wake your agents.",
   );
-  expect(screen.getByRole("radio", { name: "Wake the agent" })).toBeChecked();
+  expect(fallback()).toHaveTextContent("Wake the agent");
   const rules = screen.getByRole("textbox", { name: /Rules/ });
   expect(rules).toHaveValue(DEFAULT_RULES);
   const save = screen.getByRole("button", { name: "Save" });
@@ -42,7 +52,7 @@ it("shows the default rules, and saves only rules that parse", async () => {
     rules,
     "deny author:@me prefix:🤖{Enter}allow org:block{Enter}  allow author:copilot-pull-request-reviewer[[bot]  ",
   );
-  await user.click(screen.getByRole("radio", { name: "Don’t wake it" }));
+  await choose(user, "Don’t wake it");
   await user.click(save);
   expect(loadPolicy().text).toBe(
     "deny author:@me prefix:🤖\nallow org:block\nallow author:copilot-pull-request-reviewer[bot]",
@@ -52,7 +62,7 @@ it("shows the default rules, and saves only rules that parse", async () => {
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   expect(save).toBeDisabled();
-  await user.click(screen.getByRole("radio", { name: "Wake the agent" }));
+  await choose(user, "Wake the agent");
   expect(save).toBeEnabled();
   await user.click(save);
   expect(loadPolicy().fallback).toBe("allow");
@@ -76,7 +86,7 @@ it("shows saved rules that no longer parse, with why, until they are fixed", asy
   expect(screen.getByRole("status")).toHaveTextContent(
     "no comment or review wakes your agents",
   );
-  expect(screen.getByRole("radio", { name: "Don’t wake it" })).toBeChecked();
+  expect(fallback()).toHaveTextContent("Don’t wake it");
   await user.clear(rules);
   await user.type(rules, "deny author:eve{Enter}allow author:/^[[a-z]+$/");
   await user.click(screen.getByRole("button", { name: "Save" }));
