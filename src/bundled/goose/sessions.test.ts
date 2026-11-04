@@ -15,6 +15,7 @@ import {
   type SavedConversation,
   ServerPool,
   SharedProcess,
+  type SessionsOptions,
 } from "./sessions";
 
 const tools: ToolServer = async (_conversation, message) => ({
@@ -33,9 +34,11 @@ const setup = (
     silent,
     onChange,
     store,
+    started,
     wrap,
   }: Readonly<{
     pool?: ServerPool;
+    started?: SessionsOptions["started"];
     onChange?: () => void;
     store?: Map<string, SavedConversation>;
     /** Wraps the fake's `serve`. */
@@ -76,6 +79,7 @@ const setup = (
       ...(store && {
         store,
       }),
+      ...(started && { started }),
       launch: async () => settings,
       choice: () => choice,
       fingerprint: () =>
@@ -537,6 +541,18 @@ describe("AgentSessions", () => {
       reopened,
       first?.[0],
       "old-0",
+    ]);
+  });
+
+  it("says which conversation each session started for, and none for a one-off turn", async () => {
+    vi.useFakeTimers();
+    const started = vi.fn();
+    const { sessions } = setup({}, false, { started });
+    await sessions.deliver("chan/root", "one", 1);
+    await sessions.runOnce("watch/x", () => "look");
+    expect(started.mock.calls.map((call) => call[3])).toEqual([
+      "chan/root",
+      undefined,
     ]);
   });
 

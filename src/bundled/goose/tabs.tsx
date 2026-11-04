@@ -55,7 +55,6 @@ import {
 import {
   type GooseHistory,
   type GooseTranscript,
-  type GooseSessionRow,
   type Place,
   RECENT_LIMIT,
   TURN_LIMIT,
@@ -131,15 +130,18 @@ const placeOf = (key: string): Place => {
   const [channelId = key, root] = key.split("/");
   return { channelId, ...(root ? { root } : {}) };
 };
-/** The start saved for a session goose no longer lists. */
-const GONE = { at: -1, title: "" };
 /** Each conversation's row, from its saved sessions and any still running,
- * read by id with no search of goose, newest first; and the kept sessions of
- * no conversation, such as a watch's or timer's turn, newest first. */
+ * read by id with no search of goose, newest first; and the sessions started
+ * outside any conversation, newest first. */
 export function activityRows(
   saved: readonly { key: string; at: number; sessions: readonly string[] }[],
   live: readonly { key: string; sessionId?: string; at?: number }[],
-  starts: readonly { id: string; at?: number; title?: string }[],
+  starts: readonly {
+    id: string;
+    at?: number;
+    title?: string;
+    conversation?: string | null;
+  }[],
   label: (channelId: string) => { name?: string } | undefined = () => undefined,
 ) {
   const running = new Map(
@@ -169,12 +171,18 @@ export function activityRows(
         ...label(place.channelId),
       };
     });
-  const known = new Set(conversations.flatMap((row) => row.sessions ?? []));
-  const kept = starts
-    .filter(({ id }) => !known.has(id))
+  // A session started outside any conversation, such as a watch's or
+  // timer's turn, by what it saved as it started. One saved before that was
+  // kept is never taken as one.
+  const standalone = starts
+    .flatMap(({ id, at, title = "", conversation }): Row[] =>
+      conversation === null && at !== undefined
+        ? [{ key: id, sessionId: id, title, at, channelId: "" }]
+        : [],
+    )
     .reverse()
     .slice(0, RECENT_LIMIT);
-  return { conversations, kept };
+  return { conversations, standalone };
 }
 /** The recent rows: the opened conversation's channel first and the rest
  * newest first, each kind then kept to its own limit so neither crowds out
@@ -925,84 +933,23 @@ export function createTabs({
       (listener) => runtime.subscribe(listener),
       () => runtime.sessions(agent.key),
     );
-    // Each read again only when a session changes, or once a lookup saved
-    // older sessions' starts.
+    // Each read again only when a session changes.
     // biome-ignore lint/correctness/useExhaustiveDependencies: a session change can save one.
     const saved = useMemo(
       () => runtime.conversations(agent.key),
       [agent.key, live],
     );
-    const [listed, setListed] = useState<
-      | { wanted: string; rows: Map<string, GooseSessionRow> }
-      | { wanted: string; error: string }
-    >();
-    // biome-ignore lint/correctness/useExhaustiveDependencies: a lookup saves starts.
+    // biome-ignore lint/correctness/useExhaustiveDependencies: a session change can save one.
     const starts = useMemo(
       () => runtime.prompts(agent.key).sessions(),
-      [agent.key, live, listed],
+      [agent.key, live],
     );
-    const { conversations, kept } = activityRows(saved, live, starts, (id) =>
-      runtime.channelLabel(agent.key, id),
+    const { conversations, standalone } = activityRows(
+      saved,
+      live,
+      starts,
+      (id) => runtime.channelLabel(agent.key, id),
     );
-    // Sessions kept before their start was: looked up once in goose's
-    // listing, which saves what it found and marks the rest gone.
-    const untitled = kept
-      .filter((session) => session.at === undefined)
-      .map(({ id }) => id);
-    const wanted = untitled.join(" ");
-    const [round, setRound] = useState(0);
-    const workspace = readConfig(agent.config).workspace;
-    // A listing still answers for fewer sessions, as when one is saved.
-    const settled =
-      !!listed && untitled.every((id) => listed.wanted.split(" ").includes(id));
-    // biome-ignore lint/correctness/useExhaustiveDependencies: `untitled` follows `wanted`.
-    useEffect(() => {
-      if (!wanted || settled) return;
-      const abort = new AbortController();
-      history.listed(workspace, new Set(untitled), abort.signal).then(
-        async (rows) => {
-          await runtime.prompts(agent.key).remember(
-            new Map(
-              untitled.map((id) => {
-                const row = rows.get(id);
-                return [id, row ? { at: row.at, title: row.title } : GONE];
-              }),
-            ),
-          );
-          if (!abort.signal.aborted) setListed({ wanted, rows });
-        },
-        (error: unknown) =>
-          abort.signal.aborted || setListed({ wanted, error: message(error) }),
-      );
-      return () => abort.abort();
-    }, [wanted, workspace, round]);
-    const titles = settled && "rows" in listed ? listed.rows : undefined;
-    const lookup = !wanted
-      ? undefined
-      : !settled
-        ? "loading"
-        : "error" in listed
-          ? listed.error
-          : undefined;
-    const standalone = kept.flatMap(({ id, at, title = "" }): Row[] => {
-      const found =
-        at === undefined
-          ? titles?.get(id)
-          : at !== GONE.at
-            ? { at, title }
-            : undefined;
-      return found
-        ? [
-            {
-              key: id,
-              sessionId: id,
-              title: found.title,
-              at: found.at,
-              channelId: "",
-            },
-          ]
-        : [];
-    });
     // The opened conversation's session: a thread's saved or live one, else
     // its channel's, read again each render so a first save is picked up.
     // With neither, its transcript offers to search goose's history, in the
@@ -1109,34 +1056,10 @@ export function createTabs({
                 ))}
               </ul>
             </SettingsGroup>
-          ) : lookup ? null : (
+          ) : (
             <p className="m-0 text-body-sm text-subtle">
               None. A conversation's session starts when the agent is mentioned.
             </p>
-          )}
-          {lookup === "loading" ? (
-            <p className="m-0 text-body-sm text-subtle">
-              Loading older sessions…
-            </p>
-          ) : (
-            lookup && (
-              <div className="flex items-center gap-2">
-                <p role="alert" className="m-0">
-                  Could not list older goose sessions: {lookup}
-                </p>
-                <Button
-                  type="button"
-                  variant="subtle"
-                  size="sm"
-                  onClick={() => {
-                    setListed(undefined);
-                    setRound((value) => value + 1);
-                  }}
-                >
-                  Retry
-                </Button>
-              </div>
-            )
           )}
         </section>
         {shown && (

@@ -20,8 +20,14 @@ export const PROMPTS_PREFIX = "buzz.session-prompts.v1:";
  * reads all of it at startup. */
 export const PROMPTS_BUDGET = 1_000_000;
 
-/** When a session started and the title it was given. */
-export type SessionStart = Readonly<{ at: number; title: string }>;
+/** When a session started, the title it was given, and the conversation it
+ * started for: its key, or null for one started outside any, such as a
+ * watch's or timer's turn. Starts saved before that was kept have none. */
+export type SessionStart = Readonly<{
+  at: number;
+  title: string;
+  conversation?: string | null;
+}>;
 
 /** Sessions oldest first, each `[id, parts, start]`, a part `[label, text
  * index]`. Null parts mark a prompt that was too large to keep. Identical
@@ -65,14 +71,27 @@ function storedSession(value: unknown): Stored["sessions"][number] | undefined {
   )
     return undefined;
   if (start === undefined) return [id, parts];
-  const { at, title } = (start ?? {}) as { at?: unknown; title?: unknown };
+  const { at, title, conversation } = (start ?? {}) as {
+    at?: unknown;
+    title?: unknown;
+    conversation?: unknown;
+  };
   if (
     typeof at !== "number" ||
     !Number.isFinite(at) ||
-    typeof title !== "string"
+    typeof title !== "string" ||
+    !(
+      conversation === undefined ||
+      conversation === null ||
+      short(conversation)
+    )
   )
     return undefined;
-  return [id, parts, { at, title }];
+  return [
+    id,
+    parts,
+    conversation === undefined ? { at, title } : { at, title, conversation },
+  ];
 }
 
 /** The stored value, its damaged sessions dropped and the rest kept. */
@@ -170,23 +189,6 @@ export function sessionPrompts(
         id,
         ...start,
       })),
-    /** Keeps how sessions saved before starts were kept started, once found,
-     * so they are never looked up again. A session given none is gone. */
-    async remember(starts: ReadonlyMap<string, SessionStart>) {
-      try {
-        let changed = false;
-        const sessions = all().map((session): Session => {
-          const [id, parts, start] = session;
-          const found = starts.get(id);
-          if (start || !found) return session;
-          changed = true;
-          return [id, parts, found];
-        });
-        if (changed) await storage.set(key, JSON.stringify(packed(sessions)));
-      } catch (error) {
-        console.error("Sessions' starts were not saved", error);
-      }
-    },
     /** Keeps what a new session was sent, unless one is kept for it already:
      * the first save wins. Only a runtime's new-session path calls this, so a
      * resumed or dropped session is never filled in. A failed save is

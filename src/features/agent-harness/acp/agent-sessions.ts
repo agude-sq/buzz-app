@@ -139,8 +139,13 @@ export type SessionsOptions = Readonly<{
   /** Where each conversation's last use is saved. */
   store?: SessionStore;
   /** Told of each session opened, with the prompt and title it was opened
-   * with. */
-  started?(sessionId: string, systemPrompt: string, title?: string): void;
+   * with, and the conversation it opened for: none for a one-off turn. */
+  started?(
+    sessionId: string,
+    systemPrompt: string,
+    title?: string,
+    conversation?: string,
+  ): void;
   /** Called when a conversation's session opens, is sent a message, or
    * closes. */
   onChange?(): void;
@@ -598,7 +603,12 @@ export class AgentSessions {
       void this.close(live);
       return this.open(key, title, use, named);
     }
-    this.options.started?.(session.id, launch.systemPrompt, title);
+    this.options.started?.(
+      session.id,
+      launch.systemPrompt,
+      title,
+      this.once.has(key) ? undefined : key,
+    );
     // Removed meanwhile: the callers are gone, and `shutdown` waits for this.
     if (this.disposed) void this.close(live);
     use(live);

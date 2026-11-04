@@ -13,7 +13,6 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AgentDefaults } from "../agents/AgentDefaults";
-import { formatItemTimestamp } from "../../shared/datetime";
 import type {
   Agents,
   RegisteredAgentType,
@@ -746,7 +745,10 @@ type World = {
   live?: ReturnType<GooseRuntime["sessions"]>;
   /** Every session kept with its prompt, oldest first, and how it started
    * when that was kept. */
-  ids?: (string | { id: string; at: number; title: string })[];
+  ids?: (
+    | string
+    | { id: string; at: number; title: string; conversation?: string | null }
+  )[];
   names?: Record<string, string>;
   scope?: Config["scope"];
   /** Replaces parts of the fake runtime. */
@@ -777,15 +779,9 @@ function activity(
     prompts: () => ({
       shown: (turns: unknown) => turns,
       sessions: () =>
-        (world.ids ?? []).map((id) => (typeof id === "string" ? { id } : id)),
-      remember: async (starts: Map<string, { at: number; title: string }>) => {
-        world.ids = (world.ids ?? []).map(
-          (id): NonNullable<World["ids"]>[number] =>
-            typeof id === "string" && starts.has(id)
-              ? { id, ...(starts.get(id) as { at: number; title: string }) }
-              : id,
-        );
-      },
+        (world.ids ?? []).map((id) =>
+          typeof id === "string" ? { id } : { conversation: null, ...id },
+        ),
     }),
     ...world.runtime,
   } as unknown as GooseRuntime;
@@ -895,35 +891,50 @@ it("lists conversations by channel name, with running and standalone sessions, o
   const world: World = {
     saved: [old("a", 3), old("b", 2), old("c", 1)],
     live: [{ key: "running", busy: true, sessionId: "live", at: 4 }],
-    ids: ["s1", "timer", "live"],
+    ids: [
+      // Started for a conversation: never a standalone row.
+      { id: "s1", at: 1, title: "Gander · #b", conversation: "b" },
+      { id: "timer", at: 1, title: "Gander · timer/t" },
+      // Kept before where a session started was: never a standalone row.
+      "live",
+    ],
     names: { a: "general" },
   };
-  const { change } = activity(fake, world);
-  const user = userEvent.setup();
+  activity(fake, world);
   const items = () =>
     screen.getAllByRole("listitem").map((item) => item.textContent);
-  await waitFor(() => expect(items()).toHaveLength(6));
+  await waitFor(() => expect(items()).toHaveLength(5));
   expect(screen.getByText("general · channel")).toBeInTheDocument();
   expect(screen.getByText("running · channel")).toBeInTheDocument();
-  // A conversation saved before session ids were: it gets its first one.
-  change({
-    saved: [old("a", 3), { key: "b", at: 5, sessions: ["s1"] }, old("c", 1)],
-  });
-  // Its id leaves the standalone sessions; no row is duplicated.
-  expect(items()).toHaveLength(5);
-  expect(screen.queryByText("#general · s1")).toBeNull();
-  // A watch's or timer's session kept before its start was: titled from one
-  // listing of goose's sessions, with no search.
-  await user.click(
-    await screen.findByRole("button", {
-      name: "View transcript: #general · timer",
-    }),
-  );
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "View transcript: timer/t" }));
   expect(await screen.findByText("Hi from timer")).toBeInTheDocument();
-  expect(searches(fake)).toHaveLength(1);
   expect(keyword(fake)).toEqual([]);
 });
 
+it("lists a conversation with more than ten sessions once", () => {
+  const ids = Array.from({ length: 12 }, (_, i) => `s${i}`);
+  activity(gooseHistory(), {
+    saved: [{ key: "chan", at: 20, sessions: ids.slice(0, 10) }],
+    ids: [
+      ...ids.slice(10).map((id, at) => ({
+        id,
+        at,
+        title: "Gander · #chan",
+        conversation: "chan",
+      })),
+      "legacy",
+    ],
+  });
+  expect(
+    screen
+      .getAllByRole("listitem")
+      .map((item) =>
+        within(item).getByRole("button").getAttribute("aria-label"),
+      ),
+  ).toEqual(["View transcript: chan · channel"]);
+});
 it("follows the open conversation's newest session on Refresh", async () => {
   const fake = gooseHistory(["s1", "s2"]);
   const world: World = {
@@ -1002,102 +1013,6 @@ it("keeps a standalone run listed past a full page of saved conversations", () =
   expect(
     screen.getByRole("button", { name: "View transcript: timer/nightly" }),
   ).toBeInTheDocument();
-});
-
-it("shows each session's channel and time without asking goose, and drops one goose no longer has", async () => {
-  const fake = gooseHistory(["old"]);
-  const at = Date.parse("2027-01-15T08:00:00Z");
-  activity(fake, {
-    saved: [],
-    ids: ["gone", "old", { id: "new", at, title: "Gander · #general" }],
-  });
-  const items = () =>
-    screen.getAllByRole("listitem").map((item) => item.textContent);
-  await waitFor(() =>
-    expect(items()).toEqual([
-      `#general${formatItemTimestamp(at / 1000, { withTime: true })}View transcript`,
-      `#general · old${formatItemTimestamp(at / 1000, { withTime: true })}View transcript`,
-    ]),
-  );
-  expect(keyword(fake)).toEqual([]);
-});
-
-it("finds an older session's title on a later page of goose's listing, then stops", async () => {
-  const fake = gooseHistory(["a", "b", "old", "c"], 2);
-  activity(fake, { saved: [], ids: ["old"] });
-  expect(
-    await screen.findByRole("button", {
-      name: "View transcript: #general · old",
-    }),
-  ).toBeInTheDocument();
-  expect(searches(fake)).toHaveLength(2);
-  expect(keyword(fake)).toEqual([]);
-  expect(
-    fake.geese
-      .flatMap((goose) => goose.received)
-      .filter((message) => message.method === "_goose/unstable/session/export"),
-  ).toEqual([]);
-});
-
-it("keeps local rows while older sessions load, and offers Retry when listing them fails", async () => {
-  const at = Date.parse("2027-01-15T08:00:00Z");
-  let settle!: { resolve(rows: unknown): void; reject(error: Error): void };
-  const listed = vi.fn(
-    () =>
-      new Promise((resolve, reject) => {
-        settle = { resolve, reject };
-      }),
-  );
-  const history = { listed } as unknown as GooseHistory;
-  activity(
-    gooseHistory(),
-    {
-      saved: [],
-      ids: ["old", { id: "new", at, title: "Gander · #general" }],
-    },
-    history,
-  );
-  const rows = () =>
-    screen
-      .getAllByRole("listitem")
-      .map((item) =>
-        within(item).getByRole("button").getAttribute("aria-label"),
-      );
-  expect(rows()).toEqual(["View transcript: #general"]);
-  expect(screen.getByText("Loading older sessions…")).toBeInTheDocument();
-  expect(screen.queryByText(/^None\./)).toBeNull();
-  act(() => settle.reject(new Error("goose is unavailable")));
-  expect(
-    await screen.findByText(
-      "Could not list older goose sessions: goose is unavailable",
-    ),
-  ).toBeInTheDocument();
-  expect(rows()).toEqual(["View transcript: #general"]);
-  await userEvent.setup().click(screen.getByRole("button", { name: "Retry" }));
-  expect(listed).toHaveBeenCalledTimes(2);
-  act(() =>
-    settle.resolve(
-      new Map([
-        ["old", { sessionId: "old", title: "Gander · #ops", at: at - 1 }],
-      ]),
-    ),
-  );
-  await waitFor(() =>
-    expect(rows()).toEqual([
-      "View transcript: #general",
-      "View transcript: #ops",
-    ]),
-  );
-  expect(screen.queryByRole("alert")).toBeNull();
-});
-
-it("never says None while older sessions are still loading", () => {
-  const history = {
-    listed: () => new Promise(() => {}),
-  } as unknown as GooseHistory;
-  activity(gooseHistory(), { saved: [], ids: ["old"] }, history);
-  expect(screen.getByText("Loading older sessions…")).toBeInTheDocument();
-  expect(screen.queryByText(/^None\./)).toBeNull();
 });
 
 it("lists the opened conversation's channel first, then every session newest first", () => {
@@ -1609,30 +1524,6 @@ it.each([false, true])(
   },
 );
 
-it("looks older sessions up once: a second open lists nothing", async () => {
-  const fake = gooseHistory(["old"]);
-  const world: World = { saved: [], ids: ["gone", "old"] };
-  const first = activity(fake, world);
-  expect(
-    await screen.findByRole("button", {
-      name: "View transcript: #general · old",
-    }),
-  ).toBeInTheDocument();
-  const listings = searches(fake).length;
-  expect(listings).toBeGreaterThan(0);
-  first.unmount();
-  activity(fake, world);
-  expect(
-    screen.getByRole("button", { name: "View transcript: #general · old" }),
-  ).toBeInTheDocument();
-  expect(screen.queryByText("Loading older sessions…")).toBeNull();
-  expect(searches(fake)).toHaveLength(listings);
-  expect(world.ids).toEqual([
-    { id: "gone", at: -1, title: "" },
-    expect.objectContaining({ id: "old" }),
-  ]);
-});
-
 it("shows the good saved records when others are damaged", () => {
   const data = new Map<string, string>([
     [
@@ -1659,7 +1550,11 @@ it("shows the good saved records when others are damaged", () => {
         version: 1,
         texts: [],
         sessions: [
-          ["timer1", [], { at: 5, title: "Gander · timer/nightly" }],
+          [
+            "timer1",
+            [],
+            { at: 5, title: "Gander · timer/nightly", conversation: null },
+          ],
           ["bad", [], { at: 6, title: 42 }],
           [null, []],
           "junk",
