@@ -1,5 +1,5 @@
 // Avatar selection above the agent identity and type-owned setup fields.
-import { useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { randomAgentAvatar } from "../../features/agents/avatar-packs";
 import type {
   Agent,
@@ -132,9 +132,19 @@ export function AgentCreateDialog({
   const nameControl = useRef<HTMLDivElement>(null);
   useShake(nameControl, namePrompt.attempts);
   const form = useId();
+  const harnessId = useId();
+  const restoreHarnessFocus = useRef<string | null>(null);
   const Create = type?.Create;
   const Model = type?.CreateModel;
   const Configuration = type?.CreateConfiguration;
+  useEffect(() => {
+    if (restoreHarnessFocus.current !== type?.key) return;
+    restoreHarnessFocus.current = null;
+    document
+      .getElementById(harnessId)
+      ?.querySelector<HTMLElement>('[role="combobox"]')
+      ?.focus();
+  }, [harnessId, type?.key]);
   const close = () => setOpen(false);
   const chooseModel = (item: RegisteredAgentType, next: unknown) => {
     setTypeKey(item.key);
@@ -150,6 +160,7 @@ export function AgentCreateDialog({
     const instructions = update
       ? undefined
       : type?.carry?.(config).instructions;
+    restoreHarnessFocus.current = item.key;
     chooseModel(
       item,
       instructions && item.adopt ? item.adopt({ instructions }, next) : next,
@@ -182,6 +193,7 @@ export function AgentCreateDialog({
   };
   const harnessControl = (
     <PreferenceRow
+      id={harnessId}
       title="Harness"
       trailing={
         <Select

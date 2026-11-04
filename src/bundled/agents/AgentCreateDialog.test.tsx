@@ -14,6 +14,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { CreateModelChoices } from "../../features/agents/CreateModelChoices";
+import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { agentAvatars } from "../../features/agents/avatar-packs";
 import type {
@@ -666,6 +667,50 @@ it("shows registered logos in the harness value and choices with independent SVG
   expect(select).toHaveTextContent("Notes");
   expect(select.querySelector("svg")).not.toBeNull();
   expect(select.querySelector("mask")).toBeNull();
+});
+
+it("keeps keyboard focus on Harness when switching into and out of a configuration group", async () => {
+  const grouped: RegisteredAgentType = {
+    ...notes,
+    key: "test/grouped",
+    title: "Grouped",
+    CreateModel: () => <span>Legacy model field</span>,
+    CreateConfiguration: ({ harnessControl }) => (
+      <SettingsGroup>{harnessControl}</SettingsGroup>
+    ),
+  };
+  const { dialog, user } = setup([echo, grouped]);
+  await waitFor(() =>
+    expect(within(dialog).getByLabelText("Name")).toHaveFocus(),
+  );
+  const harness = () =>
+    within(dialog).getByRole("combobox", { name: "Harness" });
+  harness().focus();
+  await user.keyboard("{ArrowDown}");
+  await waitFor(() =>
+    expect(screen.getByRole("option", { name: "Echo" })).toHaveFocus(),
+  );
+  await user.keyboard("{End}");
+  await waitFor(() =>
+    expect(screen.getByRole("option", { name: "Grouped" })).toHaveFocus(),
+  );
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(harness()).toHaveTextContent("Grouped"));
+  await waitFor(() => expect(harness()).toHaveFocus());
+  expect(
+    within(dialog).queryByText("Legacy model field"),
+  ).not.toBeInTheDocument();
+  await user.keyboard("{ArrowDown}");
+  await waitFor(() =>
+    expect(screen.getByRole("option", { name: "Grouped" })).toHaveFocus(),
+  );
+  await user.keyboard("{Home}");
+  await waitFor(() =>
+    expect(screen.getByRole("option", { name: "Echo" })).toHaveFocus(),
+  );
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(harness()).toHaveTextContent("Echo"));
+  await waitFor(() => expect(harness()).toHaveFocus());
 });
 
 it("switches harness, starting over on the new type's defaults", async () => {
