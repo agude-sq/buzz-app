@@ -3,7 +3,10 @@ import type { LocalAgentSource } from "../agents/local-activity";
 import { createSoloPreferences, soloGroups } from "./solo-preferences";
 import { npubEncode } from "nostr-tools/nip19";
 import { createMemberAdditions } from "../channel-members/operations";
-import { addChannelMember } from "../channel-members/members";
+import {
+  addChannelMember,
+  addChannelMembersAtOnce,
+} from "../channel-members/members";
 import type { LocalAgents } from "../agents/local";
 import type { GitRead } from "../repos/git";
 import { repoDestinations } from "../repos/destinations";
@@ -180,6 +183,8 @@ export function createRelaySession(
     outboxStorage?: OutboxStorage;
     readStateStorage?: ReadStateStorage;
     readPublisherLock?: ReadPublisherLock;
+    /** Overrides the 30-day read floor, for fixtures on a toy clock. */
+    readStateFloor?: () => number;
     deliveryTimeoutMs?: number;
   } = {},
 ) {
@@ -860,7 +865,8 @@ export function createRelaySession(
         unread.accept(visible);
         writes?.observe(visible);
         if (epoch !== accessEpoch) return;
-        profiles.accept(visible);
+        // A profile read's signal lets the directory publish its pages once.
+        profiles.accept(visible, signal);
         if (epoch !== accessEpoch) return;
         emoji.accept(visible);
         if (epoch !== accessEpoch) return;
@@ -1177,6 +1183,7 @@ export function createRelaySession(
       options.readStateStorage ??
       browserReadStateStorage(readScope, transport?.viewer ?? ""),
     lock: options.readPublisherLock ?? browserReadPublisherLock(readScope),
+    floor: options.readStateFloor,
     notify,
     broadcastName: transport?.readState
       ? `buzz-read-state:${readScope}`
@@ -2078,17 +2085,15 @@ export function createRelaySession(
       }
     },
   });
+  // A Solo chat admits people under its share rule; agents join by mention.
+  const solo = (channelId: string) =>
+    (
+      session.channels.list().channels.find((item) => item.id === channelId) ??
+      session.channels.get?.(channelId)
+    )?.channelType === "solo";
   const memberAdditions = createMemberAdditions(
     lifetime.signal,
     async (channelId, pubkey, intent): Promise<void> => {
-      // A Solo chat admits people under its share rule; agents join by mention.
-      const solo =
-        (
-          session.channels
-            .list()
-            .channels.find((item) => item.id === channelId) ??
-          session.channels.get?.(channelId)
-        )?.channelType === "solo";
       await addChannelMember(
         session,
         channelId,
@@ -2096,10 +2101,20 @@ export function createRelaySession(
         lifetime.signal,
         intent,
         writes?.local,
-        solo,
+        solo(channelId),
       );
     },
     writes?.local,
+    (channelId, pubkeys, intents) =>
+      addChannelMembersAtOnce(
+        session,
+        channelId,
+        pubkeys,
+        intents,
+        lifetime.signal,
+        solo(channelId),
+        writes?.local,
+      ),
   );
   const recoverable = (
     subscribe: (listener: () => void) => () => void,
@@ -2160,6 +2175,7 @@ export function createRelaySession(
     liveWasConnected = connected;
   });
   const session = Object.freeze({
+    artifactIncremental: transport?.artifactIncremental,
     memberAdditions,
     presence,
     viewer: transport?.viewer,
@@ -2313,6 +2329,7 @@ export function createRelaySession(
           : {}),
       },
       searchProfiles,
+      () => profiles.queries.verifiedAuthority?.(),
     ),
     unread: unread.capability,
     sidebarPreferences: sidebarPreferences.queries,
