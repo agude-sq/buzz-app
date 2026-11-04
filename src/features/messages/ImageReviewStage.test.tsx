@@ -40,6 +40,7 @@ afterEach(() => {
   vi.useRealTimers();
   Reflect.deleteProperty(HTMLElement.prototype, "animate");
   Reflect.deleteProperty(HTMLImageElement.prototype, "decode");
+  Reflect.deleteProperty(navigator, "connection");
 });
 function setup(width = 1000, height = 800) {
   render(
@@ -691,6 +692,58 @@ it("prefetches thumbnails at low priority and keeps them while the gallery chang
   expect(held()).toEqual(
     [two, three].map((item) => thumbnail(item as Attachment)),
   );
+});
+
+it("prefetches no thumbnails under Save-Data but still shows the selected photo's", () => {
+  loadingImages();
+  Object.defineProperty(navigator, "connection", {
+    configurable: true,
+    value: { saveData: true },
+  });
+  const assigned = vi.spyOn(HTMLImageElement.prototype, "src", "set");
+  gallery(undefined, thumbnail);
+  // Prefetches are the detached images given a thumbnail.
+  const prefetches = assigned.mock.calls.filter(
+    ([value], index) =>
+      value?.endsWith(".thumb.jpg") &&
+      !(assigned.mock.contexts[index] as HTMLImageElement).isConnected,
+  );
+  expect(prefetches).toEqual([]);
+  expect(arriving()).toHaveAttribute("src", thumbnail(photo("one")));
+});
+
+it("shows a thumbnail again once a later prefetch of it succeeds", () => {
+  loadingImages();
+  const assigned = vi.spyOn(HTMLImageElement.prototype, "src", "set");
+  const [one, two] = ["one", "two"].map((name) => photo(name)) as [
+    Attachment,
+    Attachment,
+  ];
+  const stageWith = (photos: Attachment[], selected: Attachment) => (
+    <StrictMode>
+      <ImageReviewStage
+        attachments={photos}
+        selectedUrl={selected.url}
+        select={() => {}}
+        media={(url) => url}
+        preview={thumbnail}
+        onOpenLink={() => false}
+      />
+    </StrictMode>
+  );
+  const prefetch = () =>
+    assigned.mock.contexts[
+      assigned.mock.calls.map(([value]) => value).lastIndexOf(thumbnail(one))
+    ] as HTMLImageElement;
+  const view = render(stageWith([one, two], two));
+  fireEvent.error(prefetch());
+  // An edit removes the photo and a later one restores it.
+  view.rerender(stageWith([two], two));
+  view.rerender(stageWith([one, two], two));
+  view.rerender(stageWith([one, two], one));
+  expect(arriving()).toBeNull();
+  fireEvent.load(prefetch());
+  expect(arriving()).toHaveAttribute("src", thumbnail(one));
 });
 
 it("copies and click-zooms only a decoded original", async () => {

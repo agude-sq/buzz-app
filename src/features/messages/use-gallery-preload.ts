@@ -9,16 +9,17 @@ const MAX_WARM_PIXELS = 24_000_000;
 const MAX_WARM_BYTES = 25_000_000;
 
 /** Hold every gallery thumbnail so a selected image can show its preview at
- * once, behind the visible original. Returns the thumbnails that failed:
- * browsers retry a failed image for each new element, so those images go
- * straight to their fallback frame. */
+ * once, behind the visible original. Under Save-Data nothing is held, and only
+ * the visible image loads its own preview. Returns the thumbnails whose latest
+ * prefetch failed: browsers retry a failed image for each new element, so
+ * those images go straight to their fallback frame. */
 export function usePrefetchedPreviews(sources: readonly string[]) {
   const [failed, setFailed] = useState<ReadonlySet<string>>(() => new Set());
   const images = useRef(new Map<string, HTMLImageElement>());
   const key = sources.join("\n");
   // Rows streaming into the thread change the list; held requests carry over.
   useEffect(() => {
-    const wanted = new Set(key ? key.split("\n") : []);
+    const wanted = new Set(saveData() || !key ? [] : key.split("\n"));
     for (const [source, image] of images.current) {
       if (wanted.has(source)) continue;
       abort(image);
@@ -28,6 +29,14 @@ export function usePrefetchedPreviews(sources: readonly string[]) {
       if (images.current.has(source)) continue;
       const image = new Image();
       image.fetchPriority = "low";
+      // A source removed and added again is fetched again.
+      image.onload = () =>
+        setFailed((current) => {
+          if (!current.has(source)) return current;
+          const next = new Set(current);
+          next.delete(source);
+          return next;
+        });
       image.onerror = () =>
         setFailed((current) => new Set(current).add(source));
       image.src = source;
