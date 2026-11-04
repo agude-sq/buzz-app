@@ -1,6 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
-import type { AgentExecution } from "../../features/agents/execution";
 import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads } from "../../features/agents/reads";
 import type { MemoryEntry } from "../../features/agents/memory";
@@ -12,15 +11,8 @@ import type {
 } from "../../features/agents/service";
 import type { EventData, RelayEvent } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
-import { memoryStorage } from "../../features/agents/test-fakes";
-import type { AgentStore } from "../../features/agents/store";
 import { deferred, fakeHost, type Handler } from "./pi-testing";
-import {
-  type Config,
-  DEFAULT_CONFIG,
-  PiRuntime,
-  type PiRuntimeOptions,
-} from "./runtime";
+import { type Config, DEFAULT_CONFIG, PiRuntime } from "./runtime";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -63,12 +55,6 @@ function setup(
   /** The channel's Canvas, as it reads now. */
   canvas?: { content: string; pubkey?: string },
   repositories?: (scope: string | undefined) => string,
-  execution?: (
-    key: string,
-  ) => AgentExecution | undefined | Promise<AgentExecution | undefined>,
-  hook?: ConstructorParameters<typeof PiRuntime>[6],
-  routing?: PiRuntimeOptions,
-  storage?: AgentStore,
 ) {
   let submissions = 0;
   const host = fakeHost({
@@ -145,11 +131,6 @@ function setup(
       connection.live && key === self
         ? (agent as unknown as AgentHandle)
         : undefined,
-    hook,
-    undefined,
-    execution ? async (key) => execution(key) : undefined,
-    routing,
-    storage,
   );
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const agent = {
@@ -389,253 +370,6 @@ it("hands an owner's mention to its thread's Pi conversation", async () => {
   expect(turn.workingUntil).toHaveBeenCalledTimes(1);
   expect(published).toEqual([]);
 });
-
-it("disposes execution that resolves after the agent retires", async () => {
-  const pending = deferred<AgentExecution>();
-  const resolveExecution = vi.fn(() => pending.promise);
-  const remote = fakeHost({ places: () => ({ places: [] }) });
-  const execution: AgentExecution = {
-    workspace: "/remote/task",
-    signal: new AbortController().signal,
-    spawn: remote.spawn,
-    readFile: vi.fn(),
-    resolveDirectory: vi.fn(),
-    dispose: vi.fn(async () => {}),
-  };
-  const f = setup({}, [], undefined, undefined, resolveExecution);
-  const opening = f.runtime.places(self);
-  const rejected = expect(opening).rejects.toThrow("retired");
-  try {
-    expect(resolveExecution).toHaveBeenCalledOnce();
-    await f.runtime.retire(self);
-    pending.resolve(execution);
-    await rejected;
-    expect(execution.dispose).toHaveBeenCalledOnce();
-    expect(remote.processes).toHaveLength(0);
-  } finally {
-    pending.resolve(execution);
-    f.runtime.dispose();
-  }
-});
-
-it("retires a remote target before Pi sends ready", async () => {
-  const remote = fakeHost({}, { ready: false });
-  const spawned = deferred();
-  const execution: AgentExecution = {
-    workspace: "/remote/task",
-    signal: new AbortController().signal,
-    spawn: async (program, options) => {
-      const process = await remote.spawn(program, options);
-      spawned.resolve();
-      return process;
-    },
-    readFile: vi.fn(),
-    resolveDirectory: vi.fn(),
-    dispose: vi.fn(async () => {
-      for (const process of remote.processes) process.exit(null);
-    }),
-  };
-  const f = setup({}, [], undefined, undefined, async () => execution);
-  const opening = f.runtime.places(self);
-  const failed = expect(opening).rejects.toThrow();
-  try {
-    await spawned.promise;
-    await f.runtime.retire(self);
-    await failed;
-    expect(execution.dispose).toHaveBeenCalledOnce();
-  } finally {
-    for (const process of remote.processes) process.exit(null);
-    f.runtime.dispose();
-  }
-});
-
-it.each(["Stop", "adapter unload"] as const)(
-  "runs a bound Pi conversation with remote files, native Buzz tools and %s",
-  async (ending) => {
-    const answered = deferred<object>();
-    let early: unknown;
-    const remote = fakeHost({
-      deliver: async ({ request }, process) => {
-        process.send({
-          method: "event",
-          params: {
-            type: "placed",
-            agent: self,
-            request,
-            conversation: CONVERSATION,
-            entry: 1,
-          },
-        });
-        early = await process.tool({
-          agent: self,
-          conversation: CONVERSATION,
-          context: { channel, root: root.id },
-          name: "test_file",
-          arguments: {},
-        });
-        return { submission: 1, conversation: CONVERSATION };
-      },
-      place: () => ({ seen: 0 }),
-      unfinished: () => ({ submissions: [] }),
-      wait: () => answered.promise,
-      session: () => {
-        answered.resolve({ status: "unanswered", reason: "aborted" });
-      },
-    });
-    const lifetime = new AbortController();
-    const execution: AgentExecution = {
-      workspace: "/remote/task",
-      signal: lifetime.signal,
-      spawn: remote.spawn,
-      readFile: vi.fn(async () => new Uint8Array([42])),
-      resolveDirectory: vi.fn(async (path) => path),
-      dispose: vi.fn(async () => {}),
-    };
-    const file: AddedTool = {
-      name: "test_file",
-      description: "Read a task file",
-      inputSchema: { type: "object" },
-      call: async (client) => {
-        if (!client.read) throw new Error("Missing file reader");
-        return String((await client.read("result"))[0]);
-      },
-    };
-    const hook = vi.fn(async () => ({ block: true }));
-    const media: AddedTool = {
-      name: "test_media",
-      description: "Download media",
-      inputSchema: { type: "object" },
-      call: async (client) =>
-        JSON.stringify(await client.media("https://example.test/image")),
-    };
-    const f = setup(
-      {},
-      [file, media],
-      undefined,
-      undefined,
-      () => execution,
-      hook,
-    );
-    const turn = f.deliver({ type: "mention", event: reply("2", "@Pi look") });
-    try {
-      await turn.run;
-      expect(early).toMatchObject({
-        result: { content: [{ type: "text", text: "42" }] },
-      });
-      expect(f.host.processes).toHaveLength(0);
-      const process = remote.processes[0];
-      if (!process) throw new Error("Missing remote process");
-      expect(remote.processes[0]?.id).toBe("node");
-      expect(remote.processes[0]?.options.cwd).toBe("/remote/task");
-      expect(remote.processes[0]?.options.args?.slice(0, 2)).toEqual([
-        "--input-type=module",
-        "-e",
-      ]);
-      expect(remote.requests("deliver")[0]?.params.cwd).toBe("/remote/task");
-      const callback = {
-        agent: self,
-        conversation: CONVERSATION,
-        context: { channel, root: root.id },
-        name: "send",
-        arguments: { text: "Remote reply", audience: "everyone" },
-      };
-      await expect(
-        process.tool({ ...callback, conversation: undefined }),
-      ).resolves.toMatchObject({
-        error: "Pi callback needs a conversation ID",
-      });
-      await expect(
-        process.tool({ ...callback, agent: bob }),
-      ).resolves.toMatchObject({ error: "Pi callback names another agent" });
-      await expect(
-        process.tool(
-          { agent: self, conversation: 999, event: "beforeTool", input: {} },
-          "hook",
-        ),
-      ).resolves.toMatchObject({
-        error: "Pi callback names another conversation",
-      });
-      await expect(
-        process.tool({ ...callback, conversation: 999 }),
-      ).resolves.toMatchObject({
-        error: "Pi callback names another conversation",
-      });
-      await expect(
-        process.tool({ ...callback, context: { channel: "other" } }),
-      ).resolves.toMatchObject({
-        error: "Pi callback changes its conversation scope",
-      });
-      await expect(
-        process.tool({ ...callback, name: "test_media", arguments: {} }),
-      ).resolves.toMatchObject({
-        result: {
-          isError: true,
-          content: [
-            {
-              type: "text",
-              text: "Media download is unavailable for remote Pi agents.",
-            },
-          ],
-        },
-      });
-      expect(f.agent.media).not.toHaveBeenCalled();
-      await expect(process.tool(callback)).resolves.toMatchObject({
-        result: { content: expect.any(Array) },
-      });
-      expect(f.published[0]?.content).toBe("Remote reply");
-      await expect(
-        process.tool(
-          {
-            agent: self,
-            conversation: CONVERSATION,
-            event: "beforeTool",
-            input: { toolName: "bash" },
-          },
-          "hook",
-        ),
-      ).resolves.toMatchObject({ result: { block: true } });
-      expect(hook).toHaveBeenCalledWith(
-        self,
-        String(CONVERSATION),
-        "beforeTool",
-        { toolName: "bash" },
-      );
-      await expect(
-        process.tool({
-          ...callback,
-          name: "test_file",
-          arguments: {},
-        }),
-      ).resolves.toMatchObject({
-        result: { content: [{ type: "text", text: "42" }] },
-      });
-      expect(execution.readFile).toHaveBeenCalledWith("result", {
-        cwd: "/remote/task",
-      });
-      if (ending === "Stop") {
-        await f.runtime.session(
-          { key: self, config: DEFAULT_CONFIG } as Agent,
-          { channelId: channel, root: root.id },
-          "interrupt",
-        );
-        await expect(f.settled(turn)).resolves.toMatchObject({ ok: true });
-        expect(remote.requests("session")[0]?.params.action).toBe("interrupt");
-        await expect(process.tool(callback)).resolves.toMatchObject({
-          error: "Pi callback has no active run",
-        });
-      } else {
-        lifetime.abort(new Error("The adapter stopped"));
-        await expect(f.settled(turn)).resolves.toMatchObject({ ok: false });
-        await vi.waitFor(() => expect(f.published).toHaveLength(2));
-        expect(f.published[1]?.content).toContain("stopped");
-      }
-    } finally {
-      answered.resolve({ status: "closed" });
-      f.runtime.dispose();
-      remote.processes[0]?.exit(0);
-    }
-  },
-);
 
 it("keeps one agent's two communities' storage apart, each under its membership's key", async () => {
   const other = `${self}@other.example`;
@@ -2770,70 +2504,3 @@ it.each(["stop", "retire"])(
     expect(check).not.toHaveBeenCalled();
   },
 );
-
-it("keeps prompt metadata separate for remote sessions with equal guest IDs", async () => {
-  const storage = memoryStorage();
-  const fixtures: ReturnType<typeof setup>[] = [];
-  try {
-    for (const [sessionKey, hasCore] of [
-      ["first", false],
-      ["second", true],
-    ] as const) {
-      const f = setup(
-        {
-          deliver: () => ({ submission: 1, conversation: 1, session: 1 }),
-          wait: () => ({ status: "done" }),
-          entries: () => ({
-            session: 1,
-            entries: [
-              {
-                id: 1,
-                kind: "pi.user",
-                model: [{ role: "user", content: "Request", timestamp: 100 }],
-              },
-            ],
-          }),
-        },
-        [],
-        undefined,
-        undefined,
-        async () => ({
-          workspace: `/remote/${sessionKey}`,
-          signal: new AbortController().signal,
-          spawn: f.host.spawn,
-          readFile: async () => new Uint8Array(),
-          resolveDirectory: async (path) => path,
-          dispose: async () => {},
-        }),
-        undefined,
-        { sessionKey },
-        storage,
-      );
-      fixtures.push(f);
-      f.core.mockResolvedValue(hasCore ? "Fixture memory" : undefined);
-      const turn = f.deliver({ type: "mention", event: root });
-      await turn.run;
-      await f.settled(turn);
-    }
-    for (const [index, f] of fixtures.entries()) {
-      const transcript = await f.runtime.transcript(
-        self,
-        { key: channel, channelId: channel, at: 100, conversation: 1 },
-        false,
-        new AbortController().signal,
-      );
-      expect(transcript.turns[0]?.sessionId).toBe("1:1");
-      const metadata = transcript.turns[0]?.items.filter(
-        (item) => item.type === "system",
-      );
-      expect(metadata).toHaveLength(1);
-      expect(
-        metadata?.[0]?.sections.some(
-          (section) => section.tag === "core-memory",
-        ),
-      ).toBe(index === 1);
-    }
-  } finally {
-    for (const f of fixtures) f.runtime.dispose();
-  }
-});

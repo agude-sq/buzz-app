@@ -122,8 +122,6 @@ export class Pi {
       agent: string,
     ) => AgentProtection | undefined,
     private readonly protectedLaunch?: ProtectedLaunch,
-    private readonly directNode = false,
-    private readonly session?: string,
   ) {}
 
   /** Asks the host, starting it first if it is not running. */
@@ -263,8 +261,7 @@ export class Pi {
     // Windows has no bash, and starts Node from its own PATH. The host and
     // its packages go on stdin: together they are past Windows' 32 KB
     // command line.
-    const windows =
-      this.directNode || /^Win/i.test(globalThis.navigator?.platform ?? "");
+    const windows = /^Win/i.test(globalThis.navigator?.platform ?? "");
     const protectedLaunch = this.protectedLaunch;
     protectedLaunch?.gate.assertAvailable();
     const runtime = protectedLaunch && (await protectedLaunch.runtime());
@@ -359,7 +356,7 @@ export class Pi {
     if (!protectedLaunch)
       void connection.process
         .write(
-          `${JSON.stringify({ host, package: packageJson, lock: packageLock, ...(this.session ? { session: this.session } : {}) })}\n`,
+          `${JSON.stringify({ host, package: packageJson, lock: packageLock })}\n`,
         )
         // A host that never has its source waits for it; it stops instead.
         .catch(() => void connection.process.kill().catch(() => undefined));

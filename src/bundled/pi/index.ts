@@ -1,5 +1,7 @@
-// Pi runs local agents in one host and remote sessions in separate hosts.
-// Each session keeps its Pi storage and uses native Buzz tools.
+// Pi agents: an agent type whose agents run on Pi durable on this computer,
+// with any provider Pi supports. One Pi host runs them all, each with its own
+// storage; each conversation the agent is in is one continuing, durable Pi
+// conversation. Pi answers with the in-process Buzz tools.
 import { isTauri } from "@tauri-apps/api/core";
 import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads } from "../../features/agents/reads";
@@ -7,7 +9,6 @@ import { repositoriesContext } from "../../features/communities/repositories";
 import type { PluginModule } from "../../plugins/api";
 import { PiLogoIcon } from "../../shared/design-system/icons";
 import { type Config, config, DEFAULT_CONFIG, PiRuntime } from "./runtime";
-import { PiSessions } from "./sessions";
 import { createTabs } from "./tabs";
 
 export const TYPE_ID = "pi";
@@ -21,32 +22,26 @@ export const apply: PluginModule["apply"] = (ctx) => {
   if (!isTauri()) return;
   const { agents, host } = ctx;
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.pi"}/${TYPE_ID}`;
-  const runtime = new PiSessions(
-    agents,
-    (execution, options) =>
-      new PiRuntime(
-        host,
-        (key) => ownerReads(agents.relay(key), pubkeyOf(key)),
-        (key, signal) => agents.core(key, signal),
-        () => agents.tools(),
-        repositoriesContext,
-        (key) => agents.handle(key),
-        async (agent, session, event, input) => {
-          return (
-            (await agents.dispatchHook(
-              typeKey,
-              event,
-              input,
-              { agent, session },
-              { accepts: (output) => output != null, milliseconds: 25000 },
-            )) ?? null
-          );
-        },
-        (key, listener) => agents.relay(key)?.subscribe(listener) ?? (() => {}),
-        execution,
-        { ...options, inspectExecution: (key) => agents.inspectExecution(key) },
-        agents.storage,
-      ),
+  const runtime = new PiRuntime(
+    host,
+    (key) => ownerReads(agents.relay(key), pubkeyOf(key)),
+    (key, signal) => agents.core(key, signal),
+    () => agents.tools(),
+    repositoriesContext,
+    (key) => agents.handle(key),
+    async (agent, session, event, input) => {
+      return (
+        (await agents.dispatchHook(
+          typeKey,
+          event,
+          input,
+          { agent, session },
+          { accepts: (output) => output != null, milliseconds: 25000 },
+        )) ?? null
+      );
+    },
+    (key, listener) => agents.relay(key)?.subscribe(listener) ?? (() => {}),
+    agents.storage,
   );
   ctx.agentProtection.registerModels({
     label: "Pi",
@@ -71,7 +66,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const { ActivityTab, Create, CreateModel, SettingsTab } = createTabs({
     setup: runtime.setup,
     runtime,
-    inspect: (key) => agents.inspectExecution(key),
   });
   const sync = () => {
     const snapshot = agents.snapshot();
@@ -89,7 +83,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
 
   agents.register<Config>({
     id: TYPE_ID,
-    execution: true,
     hooks: { events: ["beforeTool", "afterTool"] },
     retire: (pubkey) => runtime.retire(pubkey),
     protection: true,

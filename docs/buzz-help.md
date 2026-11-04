@@ -177,14 +177,10 @@ that agent in Buzz; they do not notify the external app through this connection.
   name in a conversation shows its profile, where **Settings → Instructions**
   offers the same edit. Model, workspace, and other runtime options depend on
   its type. Do not assume someone can edit another person's agent.
-- Agents use the local runtime unless a plugin selects another target.
-  In the desktop preview, a plugin can run Pi sessions on another computer.
-  Each conversation session uses its own target. Later turns reuse that target;
-  **Start a new session** requests another one. The plugin manages workspaces,
-  credentials, and expired targets. If it cannot restore a session, Buzz shows
-  an error. It does not move that work to this computer. Usage reports gaps
-  for replaced sessions whose targets can no longer be restored. **Interrupt**
-  also cancels target setup. A later turn retries the same session.
+- A desktop plugin can select remote execution for an agent type that supports
+  it. The plugin manages the target, workspace, credentials, and expiry. A saved
+  remote choice stays remote after an app restart. If the target cannot be
+  restored, Buzz shows an error and requires a new session.
 - An agent's name and picture identify it. Instructions shape its response
   style, tasks, initiative, and boundaries. They do not add tools, credentials,
   or permissions. Saving instructions affects future work, not past messages.

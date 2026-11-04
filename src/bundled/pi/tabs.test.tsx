@@ -22,7 +22,6 @@ import { AgentTabs } from "../agents/AgentTabs";
 import { type Config, DEFAULT_CONFIG, type Place } from "./runtime";
 import { type Provider, type Providers, PiSetup } from "./setup";
 import { createTabs } from "./tabs";
-import { deferred } from "./pi-testing";
 import { piTurns } from "./transcript";
 
 beforeEach(() => {
@@ -100,7 +99,7 @@ function fakePi(
 
 /** The runtime's conversations: a thread Pi works in, in a channel the
  * community lists, and a channel it does not. */
-function fakeRuntime(source = new PiSetup(fakePi())) {
+function fakeRuntime() {
   const places: Place[] = [
     {
       key: "chan/root",
@@ -117,7 +116,6 @@ function fakeRuntime(source = new PiSetup(fakePi())) {
   const listeners = new Set<() => void>();
   const working = [1];
   return {
-    setupFor: vi.fn(() => source),
     places: vi.fn(async () => places),
     working: () => working,
     subscribe: () => () => {},
@@ -479,122 +477,6 @@ it("guards an invalid Pi provider draft through an agent tab switch", async () =
   expect(save).not.toHaveBeenCalled();
 });
 
-it("loads Pi setup before a pending harness change is saved", async () => {
-  const { SettingsTab } = createTabs({
-    setup: new PiSetup(fakePi()),
-    runtime: fakeRuntime(new PiSetup(fakePi({ providers: "Old harness" }))),
-  });
-  render(
-    <SettingsTab
-      agent={AGENT}
-      save={vi.fn(async () => {})}
-      settingsHost={{ pendingSave: vi.fn(async () => {}) }}
-      settingsSection="runtime"
-    />,
-  );
-  expect(await screen.findByText("Anthropic is set up in Pi.")).toBeVisible();
-});
-
-it("keeps remote credentials and workspace out of shared Pi settings", async () => {
-  const save = vi.fn(async () => {});
-  const desktop = fakePi();
-  const runtime = fakeRuntime(new PiSetup(desktop));
-  const { SettingsTab } = createTabs({
-    setup: new PiSetup(desktop),
-    runtime,
-    inspect: async () => ({
-      provider: "internal/remote",
-    }),
-  });
-  render(<SettingsTab agent={AGENT} save={save} settingsSection="runtime" />);
-  expect(
-    await screen.findByText(/adapter manages provider credentials/),
-  ).toBeVisible();
-  expect(screen.queryByRole("textbox", { name: "Workspace" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Save to Pi" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Test connection" })).toBeNull();
-  await choose("Conversations", "One conversation per channel");
-  await userEvent.setup().click(screen.getByRole("button", { name: "Save" }));
-  expect(save).toHaveBeenCalledWith({ ...AGENT.config, scope: "channel" });
-  expect(runtime.setupFor).not.toHaveBeenCalled();
-  expect(desktop.calls).not.toHaveBeenCalled();
-});
-
-it("edits a remote agent's model card without reading local Pi setup", async () => {
-  const desktop = fakePi();
-  const runtime = fakeRuntime(new PiSetup(desktop));
-  const { CreateModel } = createTabs({
-    setup: new PiSetup(desktop),
-    runtime,
-    inspect: async () => ({ provider: "internal/remote" }),
-  });
-  const onChange = vi.fn();
-  render(
-    <CreateModel
-      agentKey={AGENT.key}
-      config={DEFAULT_CONFIG}
-      onChange={onChange}
-      disabled={false}
-    />,
-  );
-  const user = userEvent.setup();
-  await user.click(
-    await screen.findByRole("button", { name: "Model: Target default" }),
-  );
-  const dialog = await screen.findByRole("dialog", {
-    name: "Provider and model",
-  });
-  expect(
-    within(dialog).queryByRole("button", { name: "Save to Pi" }),
-  ).toBeNull();
-  expect(
-    within(dialog).queryByRole("button", { name: "Test connection" }),
-  ).toBeNull();
-  await user.type(
-    within(dialog).getByRole("textbox", { name: "Provider" }),
-    "openai",
-  );
-  await user.click(within(dialog).getByRole("combobox", { name: "Model" }));
-  await user.click(await screen.findByRole("option", { name: "Custom model" }));
-  await user.type(
-    await screen.findByRole("textbox", { name: "Model ID" }),
-    "gpt-x",
-  );
-  await user.click(screen.getByRole("button", { name: "Use model" }));
-  await user.click(within(dialog).getByRole("button", { name: /^Use$/ }));
-  expect(onChange).toHaveBeenCalledWith(
-    expect.objectContaining({ provider: "openai", model: "gpt-x" }),
-  );
-  expect(runtime.setupFor).not.toHaveBeenCalled();
-  expect(desktop.calls).not.toHaveBeenCalled();
-});
-
-it("waits for the new membership's execution inspection before mounting its controls", async () => {
-  const pending = deferred<{ provider: string }>();
-  const desktop = fakePi();
-  const runtime = fakeRuntime(new PiSetup(desktop));
-  const other = { ...AGENT, key: "d".repeat(64) };
-  const { SettingsTab } = createTabs({
-    setup: new PiSetup(desktop),
-    runtime,
-    inspect: async (key) => (key === AGENT.key ? undefined : pending.promise),
-  });
-  const props = {
-    save: vi.fn(async () => {}),
-    settingsSection: "runtime" as const,
-  };
-  const view = render(<SettingsTab agent={AGENT} {...props} />);
-  await screen.findByRole("button", { name: "Test connection" });
-  view.rerender(<SettingsTab agent={other} {...props} />);
-  expect(screen.queryByRole("button", { name: "Test connection" })).toBeNull();
-  expect(runtime.setupFor).not.toHaveBeenCalledWith(other.key);
-  pending.resolve({ provider: "internal/remote" });
-  expect(
-    await screen.findByText(/adapter manages provider credentials/),
-  ).toBeVisible();
-  expect(runtime.setupFor).not.toHaveBeenCalledWith(other.key);
-});
-
 it("shows the provider, model and thinking level in Identity, and the provider's setup in Settings", async () => {
   const { SettingsTab } = createTabs({
     setup: new PiSetup(fakePi()),
@@ -637,10 +519,9 @@ it("shows the provider, model and thinking level in Identity, and the provider's
 
 it("saves a key on Enter without saving the agent's settings", async () => {
   const pi = fakePi();
-  const desktop = fakePi();
   const { SettingsTab } = createTabs({
-    setup: new PiSetup(desktop),
-    runtime: fakeRuntime(new PiSetup(pi)),
+    setup: new PiSetup(pi),
+    runtime: fakeRuntime(),
   });
   const save = vi.fn();
   render(<SettingsTab agent={AGENT} save={save} />);
@@ -656,7 +537,6 @@ it("saves a key on Enter without saving the agent's settings", async () => {
     key: "sk-test",
   });
   expect(save).not.toHaveBeenCalled();
-  expect(desktop.calls).not.toHaveBeenCalled();
 });
 
 it("settles a transcript request without opening it once Pi's late listing arrives", async () => {

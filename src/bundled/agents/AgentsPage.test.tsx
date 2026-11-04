@@ -178,7 +178,6 @@ function setup(
     teams,
   };
   const listeners = new Set<() => void>();
-  const modelUse = vi.fn<(agentKey: string | undefined) => void>();
   const echoProvider = provider("ready", ({ onClose }) => (
     <>
       <p>Echo controls</p>
@@ -245,12 +244,10 @@ function setup(
     Peek: ({ agent }: { agent: Agent }) => <p>Peek of {agent.name}</p>,
     CreateModel: model
       ? ({
-          agentKey,
           config,
           onChange,
           disabled,
         }: {
-          agentKey?: string;
           config: { reply: string };
           onChange(config: { reply: string }): void;
           disabled: boolean;
@@ -258,10 +255,7 @@ function setup(
           <button
             type="button"
             disabled={disabled}
-            onClick={() => {
-              modelUse(agentKey);
-              onChange({ ...config, reply: "New model" });
-            }}
+            onClick={() => onChange({ ...config, reply: "New model" })}
           >
             Change model
           </button>
@@ -426,16 +420,7 @@ function setup(
     snapshot = { ...snapshot, ...patch };
     for (const listener of listeners) listener();
   };
-  return {
-    agents,
-    echoProvider,
-    types,
-    show,
-    change,
-    relay,
-    modelUse,
-    ...view,
-  };
+  return { agents, echoProvider, types, show, change, relay, ...view };
 }
 
 it("opens settings for a selected agent beside the grid and follows the arrow keys", async () => {
@@ -3120,10 +3105,9 @@ it("opens deletion from the card menu without selecting it and requires confirma
 it("saves a card model through its type and keeps failures on the card", async () => {
   const user = userEvent.setup();
   const saved = agent("Ada", 1);
-  const { agents, modelUse } = setup([saved], { model: true });
+  const { agents } = setup([saved], { model: true });
   agents.save.mockRejectedValueOnce(new Error("Model could not save"));
   await user.click(screen.getByRole("button", { name: "Change model" }));
-  expect(modelUse).toHaveBeenCalledWith(saved.key);
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Model could not save",
   );

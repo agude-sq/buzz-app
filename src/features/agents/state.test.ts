@@ -26,7 +26,6 @@ it("moves agent state from localStorage, which replaces what agent storage has",
   local.setItem("buzz.agents.teams.v1", "new teams");
   local.setItem("buzz.claude-code.sessions.v1", "sessions");
   local.setItem("buzz.codex.sessions.v4:scope:ab", "codex");
-  local.setItem("buzz.pi.sessions.v1:scope:ab", "pi");
   local.setItem("buzz.codex.provider-defaults.v1", "codex defaults");
   local.setItem("buzz.claude-code.provider-defaults.v1", "claude defaults");
   local.setItem("buzz.agents.archive-unchecked.v1", "unchecked");
@@ -45,7 +44,6 @@ it("moves agent state from localStorage, which replaces what agent storage has",
     "buzz.agent.v1:aa": "kept",
     "buzz.claude-code.sessions.v1": "sessions",
     "buzz.codex.sessions.v4:scope:ab": "codex",
-    "buzz.pi.sessions.v1:scope:ab": "pi",
     "buzz.codex.provider-defaults.v1": "codex defaults",
     "buzz.claude-code.provider-defaults.v1": "claude defaults",
     "buzz.agents.archive-unchecked.v1": "unchecked",
@@ -245,7 +243,7 @@ it("rejects native execution when native state cannot be read", async () => {
 });
 
 it("scans saved entries beyond the startup copy after its pending writes", async () => {
-  const prefix = "buzz.pi.sessions.v1:agent:";
+  const prefix = "buzz.codex.sessions.v4:agent:";
   const native = files();
   const storage = await loadAgentStorage(memoryStorage(), native);
   native.saved.set(`${prefix}other-window`, "remote");

@@ -67,7 +67,6 @@ export function createAgentExecutions(root: Context, storage: AgentStore) {
   const opened = new Map<
     string,
     {
-      agent: AgentKey;
       harness: string;
       provider: string;
       revision: string;
@@ -231,7 +230,6 @@ export function createAgentExecutions(root: Context, storage: AgentStore) {
         ? AbortSignal.any([lifetime.signal, session.signal])
         : lifetime.signal;
       const entry = {
-        agent,
         harness,
         provider: provider.key,
         revision: provider.revision,

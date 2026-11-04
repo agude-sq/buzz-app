@@ -1,7 +1,6 @@
 // Pi's New agent choices and agent settings. Providers, their keys and their
 // models are Pi's own: listed from it, and keys saved with its login.
 import {
-  type ReactNode,
   useEffect,
   useId,
   useReducer,
@@ -24,7 +23,6 @@ import {
   useOpenTranscript,
 } from "../../features/agents/OpenedConversation";
 import type {
-  Agents,
   AgentCreateProps,
   AgentViewProps,
 } from "../../features/agents/service";
@@ -53,7 +51,6 @@ import {
 } from "./runtime";
 import {
   DEFAULT_THINKING,
-  THINKING_LEVELS,
   type PiModel,
   type PiSetup,
   type Provider,
@@ -196,15 +193,10 @@ const effortAfter = (
 export function createTabs({
   setup,
   runtime,
-  binding = () => undefined,
-  inspect,
 }: Readonly<{
   setup: PiSetup;
-  binding?: Agents["executionBinding"];
-  inspect?: Agents["inspectExecution"];
   runtime: Pick<
     PiRuntime,
-    | "setupFor"
     | "places"
     | "working"
     | "transcript"
@@ -213,44 +205,17 @@ export function createTabs({
     | "subscribeChannels"
   >;
 }>) {
-  function ExecutionSelection({
-    agent,
-    children,
-  }: Readonly<{
-    agent: string;
-    children(selection: ReturnType<Agents["executionBinding"]>): ReactNode;
-  }>) {
-    const [selection, retry] = useRead(() => {
-      if (!inspect) throw new Error("Execution inspection is unavailable");
-      return inspect(agent);
-    }, agent);
-    if (
-      selection.status === "loading" ||
-      (selection.status === "ready" && selection.scope !== agent)
-    )
-      return <p role="status">Loading execution settings…</p>;
-    if (selection.status === "error")
-      return (
-        <div>
-          <p role="alert">{selection.error}</p>
-          <Button onClick={retry}>Try again</Button>
-        </div>
-      );
-    return children(selection.value);
-  }
   /** The provider, its key and its model, and a test that they answer. As
    * `rows` of the agent's settings, only the provider and model: the rest is
    * `ProviderSetup`'s. `listing` is the surface's own read, so what it gates
    * agrees with this. */
   function ProviderFields({
-    setup: source = setup,
     value,
     onChange,
     listing,
     reload,
     rows = false,
   }: Readonly<{
-    setup?: PiSetup | undefined;
     value: Choice;
     onChange(value: Choice): void;
     listing: Read<Providers>;
@@ -262,7 +227,7 @@ export function createTabs({
     const id = value.provider || fallback || "";
     const provider = providers?.providers.find((item) => item.id === id);
     const [models] = useRead(
-      () => (id ? source.models(id) : Promise.resolve([] as PiModel[])),
+      () => (id ? setup.models(id) : Promise.resolve([] as PiModel[])),
       id,
     );
     const named = (key: string | undefined) =>
@@ -324,12 +289,7 @@ export function createTabs({
           </div>
         )}
         {!rows && provider && (
-          <ProviderKey
-            setup={source}
-            key={provider.id}
-            provider={provider}
-            onSaved={reload}
-          />
+          <ProviderKey key={provider.id} provider={provider} onSaved={reload} />
         )}
         <ModelPicker
           allowCustomModel={false}
@@ -351,7 +311,6 @@ export function createTabs({
         />
         {!rows && (
           <TestConnection
-            setup={source}
             choice={value}
             disabled={unusable(value, providers)}
           />
@@ -362,12 +321,10 @@ export function createTabs({
 
   /** The agent's provider's key, and a test that it answers. */
   function ProviderSetup({
-    setup: source = setup,
     choice,
     listing,
     reload,
   }: Readonly<{
-    setup?: PiSetup | undefined;
     choice: Choice;
     listing: Read<Providers>;
     reload(): void;
@@ -385,15 +342,9 @@ export function createTabs({
           </div>
         )}
         {provider && (
-          <ProviderKey
-            setup={source}
-            key={provider.id}
-            provider={provider}
-            onSaved={reload}
-          />
+          <ProviderKey key={provider.id} provider={provider} onSaved={reload} />
         )}
         <TestConnection
-          setup={source}
           choice={choice}
           disabled={unusable(choice, listing.value)}
         />
@@ -403,14 +354,9 @@ export function createTabs({
 
   /** Asks the provider and model for one short reply. */
   function TestConnection({
-    setup: source = setup,
     choice,
     disabled,
-  }: Readonly<{
-    setup?: PiSetup | undefined;
-    choice: Choice;
-    disabled: boolean;
-  }>) {
+  }: Readonly<{ choice: Choice; disabled: boolean }>) {
     // A result belongs to the choice it tested.
     const key = `${choice.provider}\u0000${choice.model}`;
     const [result, setResult] = useState<{
@@ -427,7 +373,7 @@ export function createTabs({
             setResult({ key, tested: "testing" });
             setResult({
               key,
-              tested: await source.test(choice).catch((error: unknown) => ({
+              tested: await setup.test(choice).catch((error: unknown) => ({
                 ok: false,
                 message: errorText(error),
               })),
@@ -451,14 +397,9 @@ export function createTabs({
   /** A provider's API key, saved with Pi's login. One that signs in without
    * a key is set up with the `pi` command. */
   function ProviderKey({
-    setup: source = setup,
     provider,
     onSaved,
-  }: Readonly<{
-    setup?: PiSetup | undefined;
-    provider: Provider;
-    onSaved(): void;
-  }>) {
+  }: Readonly<{ provider: Provider; onSaved(): void }>) {
     const [key, setKey] = useState("");
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState("");
@@ -467,7 +408,7 @@ export function createTabs({
       setSaving(true);
       setError("");
       try {
-        await source.login(provider.id, key.trim());
+        await setup.login(provider.id, key.trim());
         setKey("");
         setChanging(false);
         onSaved();
@@ -544,46 +485,13 @@ export function createTabs({
   }
 
   /** A provider, its key and its model, chosen apart from the card. */
-  function RemoteFields({
-    value,
-    onChange,
-  }: Readonly<{
-    value: Choice;
-    onChange(choice: Choice): void;
-  }>) {
-    return (
-      <>
-        <Field
-          label="Provider"
-          description="Leave blank to use the target's provider settings."
-        >
-          <Input
-            value={value.provider}
-            onValueChange={(provider) => onChange({ ...value, provider })}
-          />
-        </Field>
-        <ModelPicker
-          models={[]}
-          allowCustomModel
-          value={value.model}
-          defaultLabel="From target settings"
-          onChange={(model) => onChange({ ...value, model })}
-        />
-      </>
-    );
-  }
-
   function ChooseDialog({
-    setup: source = setup,
-    remote = false,
     value,
     listing,
     reload,
     onChange,
     onClose,
   }: Readonly<{
-    setup?: PiSetup | undefined;
-    remote?: boolean;
     value: Choice;
     /** The card's read of Pi's providers, so both show one result. */
     listing: Read<Providers>;
@@ -602,17 +510,13 @@ export function createTabs({
           if (!open) onClose();
         }}
         title="Provider and model"
-        description={
-          remote
-            ? "The execution adapter manages credentials on the target. Blank choices use the target's settings."
-            : "Pi's own settings are the default. Keys are saved in Pi, for every Pi agent and the pi command."
-        }
+        description="Pi's own settings are the default. Keys are saved in Pi, for every Pi agent and the pi command."
         actions={
           <>
             <Button onClick={onClose}>Cancel</Button>
             <Button
               variant="prominent"
-              disabled={!remote && unusable(draft, listing.value)}
+              disabled={unusable(draft, listing.value)}
               focusableWhenDisabled
               onClick={() => onChange(draft)}
             >
@@ -622,17 +526,12 @@ export function createTabs({
         }
       >
         <div className="grid gap-4">
-          {remote ? (
-            <RemoteFields value={draft} onChange={setDraft} />
-          ) : (
-            <ProviderFields
-              setup={source}
-              value={draft}
-              onChange={setDraft}
-              listing={listing}
-              reload={reload}
-            />
-          )}
+          <ProviderFields
+            value={draft}
+            onChange={setDraft}
+            listing={listing}
+            reload={reload}
+          />
         </div>
       </Dialog>
     );
@@ -641,39 +540,16 @@ export function createTabs({
   /** The agent's model in New agent and on its library card, marked with Pi
    * and its provider. It opens the provider dialog to set up, test and use
    * another provider or model. */
-  function CreateModel(props: AgentCreateProps<Config>) {
-    return props.agentKey && inspect ? (
-      <ExecutionSelection agent={props.agentKey}>
-        {(selection) => <ModelControl {...props} remote={!!selection} />}
-      </ExecutionSelection>
-    ) : (
-      <ModelControl
-        {...props}
-        remote={!!props.agentKey && !!binding(props.agentKey)}
-      />
-    );
-  }
-
-  function ModelControl({
-    agentKey,
-    remote,
+  function CreateModel({
     config,
     onChange,
     disabled,
     modelAppearance,
-  }: AgentCreateProps<Config> & { remote: boolean }) {
+  }: AgentCreateProps<Config>) {
     const current = readConfig(config);
-    const source = remote
-      ? undefined
-      : agentKey
-        ? runtime.setupFor(agentKey)
-        : setup;
     const [listing, reload] = useRead(
-      () =>
-        source
-          ? source.providers()
-          : Promise.resolve<Providers>({ providers: [], defaults: {} }),
-      `${agentKey ?? "new"}:${remote}`,
+      () => setup.providers(),
+      "providers",
       // Signing in or choosing defaults with the `pi` command changes them.
       "providers",
       true,
@@ -682,27 +558,24 @@ export function createTabs({
     const providers = listing.value;
     const id = current.provider || providers?.defaults.provider || "";
     const [models] = useRead(
-      () =>
-        id && source ? source.models(id) : Promise.resolve([] as PiModel[]),
+      () => (id ? setup.models(id) : Promise.resolve([] as PiModel[])),
       id,
     );
-    const unknown = remote ? undefined : unknownProvider(current, providers);
+    const unknown = unknownProvider(current, providers);
     const fallback = defaultModel(current, providers?.defaults);
     const named = (model: string) =>
       models.value?.find((item) => item.id === model)?.label ?? model;
     const provider =
       providers?.providers.find((item) => item.id === id)?.name ?? id;
-    const label = remote
-      ? current.model || "Target default"
-      : current.model
-        ? named(current.model)
-        : fallback
-          ? `Pi default (${provider} · ${named(fallback)})`
-          : !providers
-            ? "Pi default"
-            : id
-              ? "Choose a model"
-              : "Choose a provider";
+    const label = current.model
+      ? named(current.model)
+      : fallback
+        ? `Pi default (${provider} · ${named(fallback)})`
+        : !providers
+          ? "Pi default"
+          : id
+            ? "Choose a model"
+            : "Choose a provider";
     const mark = providerIcon(id);
     const error =
       listing.status === "error"
@@ -747,8 +620,6 @@ export function createTabs({
         )}
         {choosing && (
           <ChooseDialog
-            setup={source}
-            remote={remote}
             value={current}
             listing={listing}
             reload={reload}
@@ -1001,36 +872,13 @@ export function createTabs({
     );
   }
 
-  function SettingsTab(props: AgentViewProps<Config>) {
-    return inspect && !props.settingsHost?.pendingSave ? (
-      <ExecutionSelection agent={props.agent.key}>
-        {(selection) => <SettingsForm {...props} bound={selection} />}
-      </ExecutionSelection>
-    ) : (
-      <SettingsForm
-        {...props}
-        bound={
-          props.settingsHost?.pendingSave ? undefined : binding(props.agent.key)
-        }
-      />
-    );
-  }
-
-  function SettingsForm({
+  function SettingsTab({
     agent,
-    bound,
     save,
     settingsHost,
     settingsSection,
     settingsContent,
-  }: AgentViewProps<Config> & {
-    bound?: ReturnType<Agents["executionBinding"]>;
-  }) {
-    const source = bound
-      ? undefined
-      : settingsHost?.pendingSave
-        ? setup
-        : runtime.setupFor(agent.key);
+  }: AgentViewProps<Config>) {
     const form = useId();
     const saved = readConfig(agent.config);
     const [draft, setDraft] = useState(saved);
@@ -1041,10 +889,7 @@ export function createTabs({
       if (error) saveErrorRef.current?.focus();
     }, [error]);
     const [listing, reload] = useRead(
-      () =>
-        source
-          ? source.providers()
-          : Promise.resolve<Providers>({ providers: [], defaults: {} }),
+      () => setup.providers(),
       "providers",
       // Signing in or choosing defaults with the `pi` command changes them.
       "providers",
@@ -1053,8 +898,7 @@ export function createTabs({
     const defaults = listing.value?.defaults;
     const id = draft.provider || defaults?.provider || "";
     const [models] = useRead(
-      () =>
-        id && source ? source.models(id) : Promise.resolve([] as PiModel[]),
+      () => (id ? setup.models(id) : Promise.resolve([] as PiModel[])),
       id,
     );
     const configChanged = JSON.stringify(draft) !== JSON.stringify(saved);
@@ -1074,15 +918,11 @@ export function createTabs({
       }
     };
     // Undefined until the model's levels are read.
-    const levels = bound
-      ? THINKING_LEVELS
-      : levelsOf(draft, defaults, models.value);
+    const levels = levelsOf(draft, defaults, models.value);
     const level = defaults?.thinking ?? DEFAULT_THINKING;
-    const resting = bound
-      ? "From target settings"
-      : effortLabel(levels ? runsAt(levels, level) : level);
+    const resting = effortLabel(levels ? runsAt(levels, level) : level);
     const efforts = [
-      { value: "", label: bound ? resting : `${resting} · Default` },
+      { value: "", label: `${resting} · Default` },
       // A saved level the model doesn't have, or not yet read.
       ...(draft.effort && !levels?.includes(draft.effort)
         ? [
@@ -1119,32 +959,19 @@ export function createTabs({
           <>
             <SettingsGroup>
               {settingsHost?.typeControl?.(configChanged)}
-              {bound ? (
-                <RemoteFields
-                  value={draft}
-                  onChange={(choice) => setDraft({ ...draft, ...choice })}
-                />
-              ) : (
-                <ProviderFields
-                  setup={source}
-                  rows
-                  value={draft}
-                  onChange={(choice) =>
-                    setDraft({
-                      ...draft,
-                      ...choice,
-                      effort: effortAfter(
-                        draft,
-                        choice,
-                        defaults,
-                        models.value,
-                      ),
-                    })
-                  }
-                  listing={listing}
-                  reload={reload}
-                />
-              )}
+              <ProviderFields
+                rows
+                value={draft}
+                onChange={(choice) =>
+                  setDraft({
+                    ...draft,
+                    ...choice,
+                    effort: effortAfter(draft, choice, defaults, models.value),
+                  })
+                }
+                listing={listing}
+                reload={reload}
+              />
               <Select
                 label="Thinking"
                 variant="preference"
@@ -1163,32 +990,16 @@ export function createTabs({
         )}
         {settingsSection !== "identity" && (
           <>
-            {bound ? (
-              <p className="m-0 text-body-sm text-subtle">
-                The execution adapter manages provider credentials and each
-                session's workspace.
-              </p>
-            ) : (
-              <ProviderSetup
-                setup={source}
-                choice={draft}
-                listing={listing}
-                reload={reload}
+            <ProviderSetup choice={draft} listing={listing} reload={reload} />
+            <Field
+              label="Workspace"
+              description="The folder Pi works in. Use ~/ for your home folder."
+            >
+              <Input
+                value={draft.workspace}
+                onValueChange={(workspace) => setDraft({ ...draft, workspace })}
               />
-            )}
-            {!bound && (
-              <Field
-                label="Workspace"
-                description="The folder Pi works in. Use ~/ for your home folder."
-              >
-                <Input
-                  value={draft.workspace}
-                  onValueChange={(workspace) =>
-                    setDraft({ ...draft, workspace })
-                  }
-                />
-              </Field>
-            )}
+            </Field>
             <Select
               label="Conversations"
               variant="preference"
@@ -1206,7 +1017,7 @@ export function createTabs({
         <AgentSaveButton
           form={form}
           saving={saving}
-          disabled={!changed || (!bound && unusable(draft, listing.value))}
+          disabled={!changed || unusable(draft, listing.value)}
           dirty={changed}
         />
         {settingsSection !== "identity" && settingsContent}

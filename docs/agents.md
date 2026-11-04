@@ -146,67 +146,34 @@ Attention itself (the runtime, tools, storage and sources) is core, but it runs 
 
 ## Agent types and providers
 
-### Plugin execution for Pi (preview)
+### Plugin execution (preview)
 
-A plugin can offer a process and file target to the native Pi harness. Declare
-`host.agentExecution: ["buzz.pi/pi"]` and call `agents.registerExecution` with an
-ID, supported harness keys, and async `connect(binding, session)`. The target
-supplies an absolute `workspace`, `spawn`, `readFile`, `resolveDirectory`, and
-idempotent `dispose`. Its process uses the
-`HostProcess` contract. Pi starts `node --input-type=module -e <launcher>` and
-sends its pinned host and packages through stdin. The adapter owns transport,
-provider authentication, file access limits, and cleanup on its host.
+A native harness can opt into plugin execution with `execution: true` and a
+per-agent `retire` hook. A plugin declares `host.agentExecution` with the harness
+keys and calls `agents.registerExecution`. Its provider supplies `connect`, an
+absolute `workspace`, process I/O, file reads, directory resolution, and
+idempotent cleanup. The adapter owns transport, target credentials, allocation,
+reuse, expiry, and file access limits.
 
-Create a Pi agent with `agents.create`. To select its execution adapter, call
-`agents.bindExecution(agent.key, { id, config })` from the adapter plugin.
-The selection belongs to the agent's membership and names its execution
-provider. Optional `config` is adapter-owned JSON; it must contain no secrets.
-The selection is write-once. It does not name a fixed workstation or workspace.
-The existing runner requires native custody and idle turns, and retires the
-current harness before it saves this selection. Unconfigured agents use the
-existing local runtime and create no execution record. Admission reads saved
-state so a remote choice from another window cannot fall through to local work.
+The adapter selects itself with `agents.bindExecution(agent.key, { id, config })`.
+This write-once choice belongs to the agent's membership. It does not name a
+fixed workstation. The runner requires native custody and idle turns, then
+retires the current harness before it saves the choice. Admission reads durable
+state so another window's remote choice cannot start local work. Protected
+agents cannot use plugin execution.
 
-The harness saves a unique session key before it calls
-`agents.execution(agent.key, { key, intent, signal })`. `intent` is `new` until
-the first open succeeds, then `existing`. Retries keep the same key. Later turns
-and app restarts use the saved key. Another conversation, or **Start a new
-session** in the same conversation, gets another key. Stop and Compact keep it.
+The harness saves a session key before it calls
+`agents.execution(agent.key, { key, intent, signal })`. The first successful open
+changes `intent` from `new` to `existing`. Retries and app restarts keep the key.
 The adapter receives the trusted agent identity, key, intent, and abort signal.
-It owns target creation, saved mappings, expiry, replacement, and cleanup.
 Repeated opens with the same key must use the same allocation.
 
-Each remote Pi session has its own process and stored harness data. Buzz keeps identity keys, native context,
-memory, tools, hooks, and session controls in their existing owners. Tool and
-hook callbacks must name the current agent and conversation. Tool defaults must
-match that conversation's scope. Disabling the adapter stops its processes and
-rejects further work. The saved binding remains for recovery; Buzz never uses
-local execution for it. An unsupported harness change fails before it changes
-the agent or its selection. Aborting an open ends that session's shared execution
-lifetime. `dispose` stops owned processes; it preserves the adapter's saved target
-mapping. If an existing session cannot be restored, the adapter rejects with
-`code: "EXECUTION_SESSION_RESET_REQUIRED"`. Buzz shows the error and does not
-resume old harness state in an empty replacement workspace.
-Usage returns an incomplete snapshot for a replaced target that cannot be
-restored. Its `gaps` field lets the consumer keep its earlier totals and show
-what is unavailable. A reset error from the current session still rejects the
-usage request. Runtimes opened only for usage close when those reads end.
-A conversation that joins such a runtime keeps it alive.
-
-Interrupt cancels pending allocation and keeps the durable key for retry.
-Admission cancellation stops allocation until the target is established.
-Activity and usage refresh saved session inventory across open Buzz copies.
-
-Settings, model discovery, and session listings do not create targets. Remote
-Pi settings accept explicit provider and model IDs, or blank values for the
-target's settings. The adapter manages target credentials and workspaces.
-
-This preview supports Pi on a target with Node.js. It does not supply native
-containment or an HTTP MCP tunnel. Buzz tools and hooks use callbacks over the
-process connection. A remote agent can attach a target file to Buzz; downloading
-Buzz media onto the target is unavailable. Protected agents cannot use this
-path. Pi's coding tools retain their
-[existing approval limits](../src/bundled/pi/README.md#limits).
+Buzz keeps identity, tools, hooks, and session controls with their existing
+owners. Adapter unload or session abort stops owned processes and rejects new
+work. Cleanup preserves the adapter's saved target mapping. A missing target
+returns `code: "EXECUTION_SESSION_RESET_REQUIRED"`; the harness must not resume
+old state in an empty replacement. Native Codex support uses this contract in
+[the Codex layer](https://github.com/block/buzz-app/pull/2186).
 
 Harness plugins register agent types with the Agents service. An agent type owns
 the defaults, migration policy, per-agent settings tabs, model discovery and run

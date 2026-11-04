@@ -29,26 +29,18 @@ export type Tested = Readonly<{ ok: boolean; message: string }>;
 
 /** Pi's own thinking level when its settings name none. */
 export const DEFAULT_THINKING = "medium";
-export const THINKING_LEVELS = [
-  "off",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max",
-];
+const LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 /** The level a model with `levels` runs at when asked for `level`, as Pi's
  * `clampThinkingLevel` picks it: that one, else the nearest, higher first. */
 export function runsAt(levels: readonly string[], level: string) {
   if (levels.includes(level)) return level;
-  const at = THINKING_LEVELS.indexOf(level);
+  const at = LEVELS.indexOf(level);
   const has = (item: string) => levels.includes(item);
   return (
     (at < 0
       ? undefined
-      : (THINKING_LEVELS.slice(at).find(has) ??
-        THINKING_LEVELS.slice(0, at).reverse().find(has))) ??
+      : (LEVELS.slice(at).find(has) ??
+        LEVELS.slice(0, at).reverse().find(has))) ??
     levels[0] ??
     "off"
   );

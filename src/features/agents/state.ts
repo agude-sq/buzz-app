@@ -42,7 +42,6 @@ export function isAgentKey(key: string) {
     // The sessions the bundled agent types save.
     key.startsWith("buzz.claude-code.sessions.") ||
     key.startsWith("buzz.codex.sessions.") ||
-    key.startsWith("buzz.pi.sessions.v1:") ||
     // What each session started with, for its activity.
     key.startsWith(PROMPTS_PREFIX) ||
     // The relay-synced copies of agent settings that starts use.
@@ -72,11 +71,6 @@ export function executionStorage(fallback: AgentStore): AgentStore {
   return Object.freeze({
     ...fallback,
     read: async () => {
-      throw new Error(
-        "Native agent storage is unavailable. Restart Buzz before running agents.",
-      );
-    },
-    scan: async () => {
       throw new Error(
         "Native agent storage is unavailable. Restart Buzz before running agents.",
       );

@@ -1073,7 +1073,6 @@ function InventoryCard({
             >
               {Model && (
                 <Model
-                  agentKey={agent.key}
                   config={agent.config}
                   modelAppearance="glass-ghost"
                   disabled={saving}
