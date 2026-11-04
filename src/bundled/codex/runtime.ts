@@ -797,6 +797,8 @@ export class CodexRuntime {
       (execution) => this.disposeExecution(agent, execution, true),
     );
     const entry = this.entries.get(agent) ?? this.stopped.get(agent);
+    const protectedServer =
+      this.protectedServers.get(agent) ?? this.unretired.get(agent);
     const actions = [...(this.actions.get(agent) ?? [])];
     for (const action of actions) action.abort.abort();
     entry?.abort.abort();
@@ -820,8 +822,6 @@ export class CodexRuntime {
       ...(entry
         ? [
             (async () => {
-              const protectedServer =
-                this.protectedServers.get(agent) ?? this.unretired.get(agent);
               if (protectedServer) await this.shutdown(agent, protectedServer);
               const server = protectedServer ?? this.server;
               if (server) await this.stop(server, agent, entry);
@@ -829,14 +829,8 @@ export class CodexRuntime {
             })(),
           ]
         : []),
-      ...(!entry &&
-      (this.protectedServers.has(agent) || this.unretired.has(agent))
-        ? [
-            this.shutdown(
-              agent,
-              (this.protectedServers.get(agent) ?? this.unretired.get(agent))!,
-            ),
-          ]
+      ...(!entry && protectedServer
+        ? [this.shutdown(agent, protectedServer)]
         : []),
       ...pending.map((opening) => opening.ready.catch(() => undefined)),
       ...remotes.map(async ([key, remote]) => {
