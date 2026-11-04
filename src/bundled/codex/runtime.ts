@@ -674,7 +674,7 @@ export class CodexRuntime {
     ]);
     const existing = this.previews.get(agent.key);
     if (existing?.key === key) return existing.ready;
-    const ready = (async () => {
+    const ready = Promise.resolve().then(async () => {
       const binding = await this.inspect?.(agent.key);
       if (this.disposed) throw new Error("Codex runtime is disposed");
       if (this.previews.get(agent.key) !== entry)
@@ -718,7 +718,7 @@ export class CodexRuntime {
             sendDefaults: true,
             models: [{ id: model, label: model, efforts: [] }, ...offered],
           };
-    })();
+    });
     const entry = { key, ready };
     this.previews.set(agent.key, entry);
     void ready.catch(() => {
