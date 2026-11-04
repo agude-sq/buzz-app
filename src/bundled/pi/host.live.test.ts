@@ -31,11 +31,35 @@ import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import lockfile from "proper-lockfile";
 import { AuthFile, serve } from "./host.mjs";
-import { Harness } from "@earendil-works/pi-durable";
+import { defineExtension, defineTool, Harness } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 const originalOpen = Harness.open;
 let openedHarness;
-Harness.open = async (...args) => { openedHarness = await originalOpen(...args); return openedHarness; };
+Harness.open = async (...args) => {
+  openedHarness = await originalOpen(...args);
+  // Reads of a request's status are slow, so commits pile up behind them.
+  const submission = openedHarness.submission.bind(openedHarness);
+  openedHarness.submission = async (...ids) => {
+    const found = await submission(...ids);
+    return found && new Proxy(found, { get: (target, key) => key === "status"
+      ? async (...rest) => { await new Promise((resolve) => setTimeout(resolve, 30)); return target.status(...rest); }
+      : typeof target[key] === "function" ? target[key].bind(target) : target[key] });
+  };
+  return openedHarness;
+};
+/** A tool that runs another through Pi, as Code Mode does. */
+const nesting = defineExtension({
+  name: "nesting",
+  tools: [defineTool({
+    name: "nest",
+    description: "Run a command through bash",
+    parameters: { type: "object", properties: {} },
+    execute: async (_args, api, context) => {
+      await api.executeTool("bash", { command: "printf nested" }, context);
+      return { output: [{ type: "text", text: "nested" }] };
+    },
+  })],
+});
 const data = process.argv[2];
 const faux = fauxProvider();
 const models = createModels();
@@ -46,7 +70,7 @@ const tools = [
   { name: "watch_add", description: "Watch for events", inputSchema: { type: "object" }, load: "search" },
 ];
 const out = {};
-let blockTools = false, rewriteTools = false;
+let blockTools = false, rewriteTools = false, rewriteCommand = false;
 function start(prompt = async () => undefined) {
   const input = new PassThrough(), output = new PassThrough();
   const events = [], tools = [], pending = new Map();
@@ -59,6 +83,7 @@ function start(prompt = async () => undefined) {
       const result = blockTools && event === "beforeTool" ? { block: "Fixture blocks the command" }
         : rewriteTools && event === "beforeTool" ? { arguments: { ...call.arguments, text: "Rewritten arguments" } }
         : rewriteTools && event === "afterTool" ? { output: [{ type: "text", text: "Replaced result" }] }
+        : rewriteCommand && event === "beforeTool" && call.name === "bash" && call.arguments.command === "printf original" ? { arguments: { command: "printf rewritten" } }
         : null;
       input.write(JSON.stringify({ id: message.id, result }) + "\\n");
     }
@@ -80,7 +105,7 @@ function start(prompt = async () => undefined) {
     pending.set(++id, { resolve, reject });
     input.write(JSON.stringify({ id, method, params }) + "\\n");
   });
-  const { stop } = serve({ data, models, dir: data, input, output, exit: () => {} });
+  const { stop } = serve({ data, models, packages: { extensions: [nesting], errors: [] }, dir: data, input, output, exit: () => {} });
   return { rpc, events, tools, stop };
 }
 const turn = (request, text) => ({ agent, key: "chan/root", at: 100, context: { channel: "chan", root: "root" }, text, steer: "steer: " + text, request, provider: "faux", model: "faux-1", instructions: "Test.", cwd: data });
@@ -185,6 +210,16 @@ const t1 = await pi.rpc("deliver", turn("T", "tool"));
 await new Promise((resolve) => { const check = () => pi.events.some((event) => event.type === "step" && event.tool === "bash") ? resolve() : setTimeout(check, 5); check(); });
 await pi.rpc("session", { agent, key: "chan/root", action: "interrupt" });
 out.toolStop = { step: pi.events.find((event) => event.type === "step" && event.tool === "bash"), wait: await pi.rpc("wait", { agent, submission: t1.submission }), last: (await pi.rpc("entries", { agent, conversation: t1.conversation })).entries[0] };
+// A step shows the command as it runs, after the hooks, and the calls a
+// tool makes through Pi.
+rewriteCommand = true;
+faux.setResponses([() => fauxAssistantMessage([fauxToolCall("bash", { command: "printf original" }), fauxToolCall("nest", {})], { stopReason: "toolUse" }), () => fauxAssistantMessage("Ran them")]);
+const ranFrom = pi.events.length;
+const ran = await pi.rpc("deliver", turn("R", "run"));
+out.ran = { wait: await pi.rpc("wait", { agent, submission: ran.submission }) };
+await new Promise((resolve) => setTimeout(resolve, 100));
+out.ran.events = pi.events.slice(ranFrom).filter((event) => event.type === "placed" || (event.type === "step" && ["bash", "nest"].includes(event.tool))).map(({ type, tool, target, request }) => ({ type, ...(tool ? { tool } : {}), ...(target ? { target } : {}), ...(request ? { request } : {}) }));
+rewriteCommand = false;
 // Past what Pi keeps verbatim, so compacting summarizes the older turn.
 faux.setResponses([() => fauxAssistantMessage("Read it"), () => fauxAssistantMessage("Read it too"), () => fauxAssistantMessage("Summary of the chat")]);
 for (const request of ["S2", "S3"]) {
@@ -687,6 +722,13 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
       reason: "aborted",
     });
     expect(out.toolStop.step).toMatchObject({ target: "sleep 30" });
+    expect(out.ran.wait).toMatchObject({ status: "done", text: "Ran them" });
+    expect(out.ran.events).toEqual([
+      { type: "placed", request: "R" },
+      { type: "step", tool: "bash", target: "printf rewritten" },
+      { type: "step", tool: "nest" },
+      { type: "step", tool: "bash", target: "printf nested" },
+    ]);
     expect(out.toolStop.wait).toMatchObject({
       status: "unanswered",
       reason: "aborted",

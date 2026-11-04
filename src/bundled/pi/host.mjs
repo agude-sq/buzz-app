@@ -808,8 +808,12 @@ export function serve({
         cores: new Map(),
         /** Each conversation's tool context, for runs resumed after a restart. */
         contexts: new Map(),
-        /** Each watched conversation, and whether a run is in it. */
+        /** Each watched conversation, once its watch has started, and
+         * whether a run is in it. */
         watched: new Map(),
+        /** The arguments each conversation's tool calls run with, after the
+         * hooks, by call. */
+        arguments: new Map(),
         /** Deliveries to each conversation key, one after another. */
         queues: new Map(),
         /** Why each request withdrawn with a failed run is unanswered. */
@@ -918,7 +922,15 @@ export function serve({
                     input,
                   }),
                   context,
-                ).then((value) => value ?? undefined),
+                ).then((value) => {
+                  // Its step shows the call as it runs, not as the model
+                  // asked for it.
+                  const calls =
+                    opened.arguments.get(api.conversationId) ?? new Map();
+                  opened.arguments.set(api.conversationId, calls);
+                  calls.set(input.id, value?.arguments ?? input.arguments);
+                  return value ?? undefined;
+                }),
               afterTool: (input, result, api, context) =>
                 awaitWithContext(
                   call("hook", {
@@ -972,50 +984,67 @@ export function serve({
   }
 
   /** Watches a conversation for its steps, whether it is working, and when
-   * each request joins its run. */
-  async function watch(opened, conversation) {
-    const watched = opened.watched.get(conversation);
-    if (watched) return watched;
-    const handle = await (
-      await opened.harness.conversation(conversation, context)
-    ).watch(context);
-    // What was there before the watch is not sent again: the run's inputs,
-    // its tool calls, and the parts of the reply in progress.
-    const first = handle.value.docs["pi.live"] ?? {};
-    const inputs = new Set(first.run?.inputs);
-    const calls = new Set(first.tools?.map(({ callId }) => callId));
-    let attempt = first.generation?.attempt;
-    let parts = first.generation?.message?.content?.length ?? 0;
-    const state = { busy: Boolean(first.run), handle };
-    opened.watched.set(conversation, state);
-    const send = (event) =>
-      notify("event", { agent: opened.agent, conversation, ...event });
-    handle.start(async ({ value: view }) => {
+   * each request joins its run. Pi's observer sees every commit, so a step
+   * that starts and ends between two reads is still sent. */
+  function watch(opened, conversation) {
+    let watched = opened.watched.get(conversation);
+    if (!watched) {
+      watched = observe(opened, conversation);
+      opened.watched.set(conversation, watched);
+      watched.catch(() => opened.watched.delete(conversation));
+    }
+    return watched;
+  }
+
+  async function observe(opened, conversation) {
+    let queue = Promise.resolve();
+    /** `sent`: once every event so far has gone out. */
+    const state = { busy: false, observation: undefined, sent: () => queue };
+    // Events go out in order, each after the reads it needs. The observer
+    // itself must not wait.
+    const send = (event) => {
+      queue = queue
+        .then(async () => {
+          const ready = await event;
+          if (ready)
+            notify("event", { agent: opened.agent, conversation, ...ready });
+        })
+        .catch((error) => console.error("Pi could not send a step", error));
+    };
+    /** Sent already: the run's inputs and tool calls, and reply parts. */
+    const inputs = new Set();
+    const calls = new Set();
+    let attempt;
+    let parts = 0;
+    const look = (view, initial) => {
       const live = view.docs["pi.live"] ?? {};
       state.busy = Boolean(live.run);
       if (!live.run) {
         inputs.clear();
         calls.clear();
+        opened.arguments.delete(conversation);
       }
       for (const id of live.run?.inputs ?? []) {
         if (inputs.has(id)) continue;
         inputs.add(id);
-        const submission = await opened.harness.submission(id, context);
-        const record = await submission?.status(context);
-        if (record?.requestId && record.entry)
-          send({
-            type: "placed",
-            request: record.requestId,
-            entry: record.entry,
-          });
+        if (!initial) send(placed(opened, id));
       }
-      for (const { callId, name, status } of live.tools ?? []) {
-        if (status === "pending" || calls.has(callId)) continue;
-        calls.add(callId);
+      for (const slot of [...(live.tools ?? []), ...(live.nestedTools ?? [])]) {
+        if (slot.status === "pending" || calls.has(slot.callId)) continue;
+        calls.add(slot.callId);
+        if (initial) continue;
+        const { name } = slot;
         send({
           type: "step",
           tool: name.startsWith(PREFIX) ? name.slice(PREFIX.length) : name,
-          target: targetOf(argumentsOf(view.entries, callId)),
+          target: targetOf(
+            // A nested call shows the arguments it runs with. A call the
+            // model made runs with what the hooks left of its arguments.
+            "parentCallId" in slot
+              ? slot.arguments
+              : (opened.arguments.get(conversation)?.get(slot.callId) ??
+                  argumentsOf(view.entries, slot.callId)),
+          ),
         });
       }
       const generation = live.generation;
@@ -1025,12 +1054,34 @@ export function serve({
         parts = 0;
       }
       for (; parts < content.length; parts++)
-        if (content[parts].type === "thinking")
+        if (initial) continue;
+        else if (content[parts].type === "thinking")
           send({ type: "step", tool: "Thinking" });
         else if (content[parts].type === "text")
           send({ type: "step", tool: "Writing reply" });
-    });
+    };
+    state.observation = await opened.harness.observeConversation(
+      conversation,
+      {
+        advance: (call) => {
+          if (call.kind === "value") look(call.value, false);
+        },
+        end: () => undefined,
+      },
+      context,
+    );
+    // What was there before the watch is not sent again.
+    look(state.observation.value, true);
     return state;
+  }
+
+  /** A request that joined its run, as Buzz is told of it. */
+  async function placed(opened, id) {
+    const submission = await opened.harness.submission(id, context);
+    const record = await submission?.status(context);
+    return record?.requestId && record.entry
+      ? { type: "placed", request: record.requestId, entry: record.entry }
+      : undefined;
   }
 
   async function settle(opened, id) {
@@ -1039,6 +1090,9 @@ export function serve({
       const submission = await opened.harness.submission(id, context);
       if (!submission) throw new Error("Pi has no record of this request");
       record = await submission.wait(context);
+      // What Buzz was told of the request's run comes before its answer.
+      const watched = opened.watched.get(record.conversationId);
+      await (await watched?.catch(() => undefined))?.sent();
     } catch (error) {
       // Storage that failed closed the Harness, with the run in it: the
       // plugin opens the agent again, and waits for the run there.
@@ -1594,7 +1648,8 @@ export function serve({
     if (!opened) return;
     if (!opened.closing)
       opened.closing = (async () => {
-        for (const { handle } of opened.watched.values()) await handle.stop();
+        for (const watched of opened.watched.values())
+          (await watched.catch(() => undefined))?.observation.detach();
         await opened.harness.close(context);
         // A compromised lock may already be released. Native execution has
         // ended above; releasing ownership is cleanup, not its acknowledgement.
