@@ -136,7 +136,12 @@ export function memoryListing(input: unknown): MemoryListing {
   });
 }
 
-/** Each mounted consumer owns a view; session retirement revokes every view. */
+/** How long a closed view's last listing stays in memory, so reopening it
+ * shows that listing at once while it reads again. Never stored anywhere. */
+export const MEMORY_CACHE_MS = 30_000;
+
+/** Each mounted consumer owns a view; session retirement revokes every view
+ * and drops the listings kept for reopening. */
 export function createAgentMemories(
   source: MemoryReader | undefined,
   viewer: string,
@@ -148,9 +153,27 @@ export function createAgentMemories(
   let closed = false;
   let generation = 0;
   let queued = Promise.resolve();
+  /** Each agent's last complete read; released `MEMORY_CACHE_MS` after its
+   * view closes, unless one opens again first. */
+  const kept = new Map<
+    string,
+    {
+      listing: MemoryListing;
+      release?: ReturnType<typeof setTimeout> | undefined;
+    }
+  >();
+  const forget = () => {
+    for (const entry of kept.values()) clearTimeout(entry.release);
+    kept.clear();
+  };
   function open(agent: string) {
     if (closed || views.size >= 4) throw new Error("Memory views unavailable");
     const eligible = memoryAgent(agent, viewer);
+    const cached = kept.get(agent);
+    if (cached) {
+      clearTimeout(cached.release);
+      cached.release = undefined;
+    }
     let disposed = false;
     let controller: AbortController | undefined;
     let snapshot: MemorySnapshot = {
@@ -185,7 +208,13 @@ export function createAgentMemories(
         }
         const owned = new AbortController();
         controller = owned;
-        publish({ status: "loading" });
+        const admitted = generation;
+        const cached = kept.get(agent)?.listing;
+        publish(
+          cached
+            ? { status: "loading", listing: cached }
+            : { status: "loading" },
+        );
         try {
           owned.signal.throwIfAborted();
           const signal = owned.signal;
@@ -193,7 +222,9 @@ export function createAgentMemories(
             await retryRead((signal) => {
               // Each attempt starts its own listing; a page names its slugs'
               // newest heads, so a later page's entry replaces an earlier one.
-              const heads = new Map<string, MemoryEntry | undefined>();
+              const heads = new Map<string, MemoryEntry | undefined>(
+                cached?.entries.map((entry) => [entry.slug, entry]),
+              );
               return source(agent, signal, undefined, (page) => {
                 if (signal.aborted || !available()) return;
                 for (const entry of page.entries) heads.set(entry.slug, entry);
@@ -214,6 +245,8 @@ export function createAgentMemories(
             }, signal),
           );
           signal.throwIfAborted();
+          if (admitted === generation && available())
+            kept.set(agent, { listing });
           if (!owned.signal.aborted)
             publish(
               available()
@@ -238,6 +271,11 @@ export function createAgentMemories(
         clear();
         listeners.clear();
         views.delete(view);
+        const entry = kept.get(agent);
+        if (entry && !entry.release)
+          entry.release = setTimeout(() => {
+            if (kept.get(agent) === entry) kept.delete(agent);
+          }, MEMORY_CACHE_MS);
       },
     };
     views.add(view);
@@ -293,12 +331,14 @@ export function createAgentMemories(
     capability: Object.freeze({ open, read }),
     clear() {
       generation++;
+      forget();
       for (const controller of reads) controller.abort();
       for (const view of views) view.clear();
     },
     dispose() {
       closed = true;
       generation++;
+      forget();
       for (const controller of reads) controller.abort();
       for (const view of views) view.dispose();
     },

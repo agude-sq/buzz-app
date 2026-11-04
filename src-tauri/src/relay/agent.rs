@@ -312,11 +312,14 @@ pub(crate) fn slug(s: &str) -> bool {
             })
     })
 }
-/// Most events one memory query asks for. A memory body is at most 64 KiB, so
-/// a page of ordinary memory events stays under the response cap; a page that
-/// exceeds it (an event carrying unusually many tags) fails the read.
-const MEMORY_PAGE: usize = 16;
-const MEMORY_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
+/// Most events one memory query asks for. A memory body is at most 64 KiB, and
+/// its ciphertext is base64 (about 4/3 larger) plus the event envelope, so a
+/// page of 128 ordinary memory events (about 11 MiB at most) stays under the
+/// 16 MiB response cap; a page that exceeds it (an event carrying unusually
+/// many tags) fails the read. Few large pages keep the round trips few: about
+/// 240 memories take 2.
+const MEMORY_PAGE: usize = 128;
+const MEMORY_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 /// Most memory events and decoded bytes one read keeps. A listing that
 /// reaches either cap stops there and is returned partial.
 const MEMORY_EVENTS: usize = 4096;
@@ -327,8 +330,8 @@ const MEMORY_DECODED_BYTES: usize = 8 * 1024 * 1024;
 struct MemoryBudget {
     /// Relay `/query` calls. The relay admits 300 per owner per minute, shared
     /// with every other read the app makes, so one listing takes at most 64
-    /// (about a fifth). At 16 events a page this makes 1,024 entries the real
-    /// listing limit, below `MEMORY_EVENTS`.
+    /// (about a fifth). At 128 events a page that is more than
+    /// `MEMORY_EVENTS`, so the event cap is the real listing limit.
     requests: usize,
     events: usize,
     /// Undecoded response bytes kept across pages. Ciphertext is base64 plus
@@ -1686,10 +1689,13 @@ mod tests {
         let ms = std::time::Duration::from_millis;
         // Slow pages: two arrive and decode before the deadline, the third
         // does not. Their entries come back, partial, within the grace.
-        let (_, _, _, events) = memory_events(48, 64);
+        let (_, _, _, events) = memory_events(3 * MEMORY_PAGE as u64, 64);
         let (listing, took) = read_through(events, ms(300), ms(120), None).await;
         assert_eq!(listing["partial"], true);
-        assert_eq!(listing["entries"].as_array().unwrap().len(), 32);
+        assert_eq!(
+            listing["entries"].as_array().unwrap().len(),
+            2 * MEMORY_PAGE
+        );
         assert!(took < ms(300) + MEMORY_DECODE_GRACE + ms(100), "{took:?}");
         // A decode still running when the grace ends is not waited on, and
         // the entries it already decoded are kept.
@@ -1709,16 +1715,20 @@ mod tests {
     #[tokio::test]
     async fn memory_listing_pages_past_the_event_and_response_caps() {
         // 300 entries of 8 KiB: more than the old 256-event limit and more
-        // than one 2 MiB response, with two entries to each second so pages
-        // split seconds.
+        // than two pages, with two entries to each second so pages split
+        // seconds.
         let (viewer_secret, viewer, agent, events) = memory_events(300, 8 * 1024);
-        let wire: usize = events.iter().map(|event| event.to_string().len()).sum();
-        assert!(wire > MEMORY_RESPONSE_BYTES);
         let asked = std::sync::Mutex::new(Vec::new());
         let (records, partial) = paged(&events, &asked).await;
         assert!(!partial);
         assert_eq!(records.len(), 300);
-        assert!(asked.lock().unwrap().len() > 300 / MEMORY_PAGE);
+        assert_eq!(asked.lock().unwrap().len(), 3);
+        // About 240 memories, as one owner has, take 2 requests.
+        let asked = std::sync::Mutex::new(Vec::new());
+        let (some, partial) = paged(&events[..240], &asked).await;
+        assert!(!partial);
+        assert_eq!(some.len(), 240);
+        assert_eq!(asked.lock().unwrap().len(), 2);
         let listing =
             decode_memories_with_key(&viewer_secret, &viewer, &viewer, &agent, &records, || false)
                 .unwrap();
@@ -1770,7 +1780,7 @@ mod tests {
         // A tied run followed by older entries.
         let mixed: Vec<_> = (0..MEMORY_PAGE as u64 + 5)
             .map(|i| stub(i, 9))
-            .chain((100..140).map(|i| stub(i, 1_000 - i)))
+            .chain((10_000..10_040).map(|i| stub(i, 20_000 - i)))
             .collect();
         let (records, partial) = paged(&mixed, &none()).await;
         assert!(!partial);
@@ -1810,7 +1820,9 @@ mod tests {
 
     #[tokio::test]
     async fn memory_listing_stops_partial_at_its_request_and_byte_budgets() {
-        let many: Vec<_> = (0..200u64).map(|i| stub(i, 1_000 - i)).collect();
+        let many: Vec<_> = (0..4 * MEMORY_PAGE as u64)
+            .map(|i| stub(i, 10_000 - i))
+            .collect();
         let asked = std::sync::Mutex::new(Vec::new());
         let budget = MemoryBudget {
             requests: 3,
@@ -1863,7 +1875,7 @@ mod tests {
             |_| {
                 calls += 1;
                 let page: Vec<_> = (0..MEMORY_PAGE as u64)
-                    .map(|i| Some(stub(calls * 100 + i, 1_000 - calls * 100 - i)))
+                    .map(|i| Some(stub(calls * 1_000 + i, 1_000_000 - calls * 1_000 - i)))
                     .collect();
                 async move {
                     tokio::time::sleep(std::time::Duration::from_secs(4)).await;
@@ -1891,7 +1903,7 @@ mod tests {
                 calls += 1;
                 let size = if calls <= 20 { MEMORY_PAGE as u64 } else { 3 };
                 let page: Vec<_> = (0..size)
-                    .map(|i| Some(stub(calls * 100 + i, 10_000 - calls * 100 - i)))
+                    .map(|i| Some(stub(calls * 1_000 + i, 1_000_000 - calls * 1_000 - i)))
                     .collect();
                 async move {
                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -1916,7 +1928,7 @@ mod tests {
         // Pages were kept in the order they were read.
         let kept = kept.into_inner().unwrap();
         let expected: Vec<_> = (1..=21u64)
-            .map(|n| json!(format!("{:064x}", n * 100)))
+            .map(|n| json!(format!("{:064x}", n * 1_000)))
             .collect();
         assert_eq!(kept, expected);
         // 21 fetches overlapped with 21 decodes: about 22 seconds, not 42.
@@ -1942,7 +1954,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn streamed_memory_read_reports_each_pages_heads_as_they_decode() {
-        let (secret, viewer, agent, events) = memory_events(40, 64);
+        let (secret, viewer, agent, events) = memory_events(2 * MEMORY_PAGE as u64 + 8, 64);
         let mut pages = events
             .chunks(MEMORY_PAGE)
             .map(<[Value]>::to_vec)
@@ -1982,7 +1994,7 @@ mod tests {
             .iter()
             .map(|delta| delta["entries"].as_array().unwrap().len())
             .collect();
-        assert_eq!(sizes, [16, 16, 8]);
+        assert_eq!(sizes, [MEMORY_PAGE, MEMORY_PAGE, 8]);
         assert_eq!(listing["partial"], false);
         let mut streamed: Vec<_> = deltas
             .iter()
