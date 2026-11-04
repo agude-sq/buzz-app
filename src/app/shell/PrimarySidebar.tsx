@@ -299,6 +299,7 @@ function ScopedSidebar({
                         header,
                         creationTrigger,
                         pendingClick,
+                        composeOrdinary,
                       ) => (
                         <SoloRegions
                           key={`regions:${scope}:${connection.generation}`}
@@ -308,6 +309,7 @@ function ScopedSidebar({
                           target={props.target}
                           sidebar={sidebar}
                           ordinary={ordinary}
+                          composeOrdinary={composeOrdinary}
                           ordinaryActions={ordinaryActions}
                           creationTrigger={creationTrigger}
                           pendingClick={pendingClick}
