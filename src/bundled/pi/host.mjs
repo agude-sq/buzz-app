@@ -924,11 +924,14 @@ export function serve({
                   context,
                 ).then((value) => {
                   // Its step shows the call as it runs, not as the model
-                  // asked for it.
-                  const calls =
-                    opened.arguments.get(api.conversationId) ?? new Map();
-                  opened.arguments.set(api.conversationId, calls);
-                  calls.set(input.id, value?.arguments ?? input.arguments);
+                  // asked for it. Only a watched conversation sends steps,
+                  // and its watch lets go of them.
+                  if (opened.watched.has(api.conversationId)) {
+                    const calls =
+                      opened.arguments.get(api.conversationId) ?? new Map();
+                    opened.arguments.set(api.conversationId, calls);
+                    calls.set(input.id, value?.arguments ?? input.arguments);
+                  }
                   return value ?? undefined;
                 }),
               afterTool: (input, result, api, context) =>
@@ -1032,6 +1035,8 @@ export function serve({
       for (const slot of [...(live.tools ?? []), ...(live.nestedTools ?? [])]) {
         if (slot.status === "pending" || calls.has(slot.callId)) continue;
         calls.add(slot.callId);
+        const ran = opened.arguments.get(conversation)?.get(slot.callId);
+        opened.arguments.get(conversation)?.delete(slot.callId);
         if (initial) continue;
         const { name } = slot;
         send({
@@ -1042,8 +1047,7 @@ export function serve({
             // model made runs with what the hooks left of its arguments.
             "parentCallId" in slot
               ? slot.arguments
-              : (opened.arguments.get(conversation)?.get(slot.callId) ??
-                  argumentsOf(view.entries, slot.callId)),
+              : (ran ?? argumentsOf(view.entries, slot.callId)),
           ),
         });
       }
@@ -1060,11 +1064,16 @@ export function serve({
         else if (content[parts].type === "text")
           send({ type: "step", tool: "Writing reply" });
     };
+    // Pi may deliver commits before it hands over the value they follow:
+    // they wait for it.
+    let early = [];
     state.observation = await opened.harness.observeConversation(
       conversation,
       {
         advance: (call) => {
-          if (call.kind === "value") look(call.value, false);
+          if (call.kind !== "value") return;
+          if (early) early.push(call.value);
+          else look(call.value, false);
         },
         end: () => undefined,
       },
@@ -1072,6 +1081,8 @@ export function serve({
     );
     // What was there before the watch is not sent again.
     look(state.observation.value, true);
+    for (const view of early) look(view, false);
+    early = undefined;
     return state;
   }
 

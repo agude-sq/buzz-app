@@ -45,6 +45,16 @@ Harness.open = async (...args) => {
       ? async (...rest) => { const gate = statusGate; if (gate) { gate.entered.release(); await gate.gate; } return target.status(...rest); }
       : typeof target[key] === "function" ? target[key].bind(target) : target[key] });
   };
+  // While \`staleSnapshot\` is set, a watch gets a commit before the value
+  // it follows, and that value still shows a run working.
+  const observeConversation = openedHarness.observeConversation.bind(openedHarness);
+  openedHarness.observeConversation = async (id, observer, ...rest) => {
+    const observation = await observeConversation(id, observer, ...rest);
+    if (!staleSnapshot) return observation;
+    observer.advance({ kind: "value", value: observation.value, ops: [], retired: false });
+    const docs = { ...observation.value.docs, "pi.live": { ...observation.value.docs["pi.live"], run: { taskId: 0, inputs: [], turns: 0 } } };
+    return { value: { ...observation.value, docs }, detach: () => observation.detach() };
+  };
   return openedHarness;
 };
 /** A tool that runs another through Pi, as Code Mode does. */
@@ -70,7 +80,7 @@ const tools = [
   { name: "watch_add", description: "Watch for events", inputSchema: { type: "object" }, load: "search" },
 ];
 const out = {};
-let blockTools = false, rewriteTools = false, rewriteCommand = false, statusGate;
+let blockTools = false, rewriteTools = false, rewriteCommand = false, statusGate, staleSnapshot = false;
 function start(prompt = async () => undefined) {
   const input = new PassThrough(), output = new PassThrough();
   const events = [], tools = [], pending = new Map();
@@ -230,6 +240,14 @@ try {
 out.ran = { wait: await pi.rpc("wait", { agent, submission: ran.submission }) };
 out.ran.events = pi.events.slice(ranFrom).filter((event) => event.type === "placed" || (event.type === "step" && ["bash", "nest"].includes(event.tool))).map(({ type, tool, target, request }) => ({ type, ...(tool ? { tool } : {}), ...(target ? { target } : {}), ...(request ? { request } : {}) }));
 rewriteCommand = false;
+// A watch whose first value is older than a commit it got takes the commit:
+// the run it shows ended, so a request starts a turn rather than steering.
+staleSnapshot = true;
+let staleSaw = [];
+faux.setResponses([(context) => { staleSaw = context.messages.filter((m) => m.role === "user").map((m) => m.content); return fauxAssistantMessage("Fresh"); }]);
+const stale = await pi.rpc("deliver", { ...turn("ST", "stale"), key: "chan/stale", context: { channel: "chan", root: "stale" } });
+staleSnapshot = false;
+out.stale = { wait: await pi.rpc("wait", { agent, submission: stale.submission }), saw: staleSaw };
 // Past what Pi keeps verbatim, so compacting summarizes the older turn.
 faux.setResponses([() => fauxAssistantMessage("Read it"), () => fauxAssistantMessage("Read it too"), () => fauxAssistantMessage("Summary of the chat")]);
 for (const request of ["S2", "S3"]) {
@@ -739,6 +757,8 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
       { type: "step", tool: "nest" },
       { type: "step", tool: "bash", target: "printf nested" },
     ]);
+    expect(out.stale.wait).toMatchObject({ status: "done", text: "Fresh" });
+    expect(out.stale.saw).toEqual(["stale"]);
     expect(out.toolStop.wait).toMatchObject({
       status: "unanswered",
       reason: "aborted",
