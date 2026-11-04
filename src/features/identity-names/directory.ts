@@ -184,7 +184,19 @@ export function createNameProvider(
   };
   return {
     id: policy.id,
-    ...(local ? { subscribe: local.subscribe } : {}),
+    subscribe(listener) {
+      const stops = [
+        local?.subscribe(listener),
+        // Cached labels came from the policy's old output.
+        policy.subscribe?.(() => {
+          base = undefined;
+          listener();
+        }),
+      ];
+      return () => {
+        for (const stop of stops) stop?.();
+      };
+    },
     activate(source) {
       return source.agentLibrary.retain();
     },

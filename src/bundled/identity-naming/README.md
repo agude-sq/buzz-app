@@ -6,6 +6,11 @@ Helps you tell people and agents apart when they share a name, by adding a short
 
 Names across Buzz are labeled automatically.
 
+To show people by the full name their community verified, such as “Alexander
+Gude” instead of “agude”, turn on **Prefer verified full names** in this
+plugin’s settings. Agents keep their own names, and people who share a full
+name are still told apart.
+
 ---
 
 # Contextual identity names
@@ -278,6 +283,13 @@ latter; the naming path does **not** verify the owner's attestation signature.
 Clients MUST NOT use this display hint as authorization. Missing owner names
 simply remove the owner-prefix option; no invented owner or extra naming-only
 network fetch is required.
+
+With **Prefer verified full names** on, the plugin replaces a non-agent
+fact's name with that profile's verified full name, when it has one, before
+running the resolver. That is the caller's name choice described in
+[Inputs and outputs](#inputs-and-outputs), not a change to the algorithm. The
+choice is saved on this device; changing it notifies the service, which
+recomputes every label.
 
 Without an active naming provider, the desktop service falls back to public
 profile names and caller fallbacks; that mode does not promise disambiguation.

@@ -84,6 +84,9 @@ the interface unless an available tool actually supports that action.
   verified person shows their verified name with the full name beside it.
   Search finds people by their profile names; once found, a verified full name
   also matches as you refine.
+  To show people by their verified full names everywhere else, such as message
+  bylines, turn on **Prefer verified full names** under
+  **Settings → Plugins → Identity Naming**. Agents keep their own names.
 
 ## Connect an external app
 

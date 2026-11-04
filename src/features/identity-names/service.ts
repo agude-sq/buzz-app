@@ -17,6 +17,8 @@ export type NamingPolicy = {
     viewer?: string,
     candidates?: readonly string[],
   ): ReadonlyMap<string, { name: string; qualifier?: string | undefined }>;
+  /** Notifies when `resolve` would label the same identities differently. */
+  subscribe?(listener: () => void): () => void;
 };
 
 export type NameSource = {
