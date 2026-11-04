@@ -127,3 +127,13 @@ it("says why gh cannot name the account", async () => {
     cleanup();
   }
 });
+
+it("keeps the rule syntax behind a disclosure", async () => {
+  const user = userEvent.setup();
+  render(<AuthorSettings active={() => true} />);
+  const syntax = screen.getByRole("button", { name: "Rule syntax" });
+  expect(syntax).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByText(/author:@me is your GitHub account/)).toBeNull();
+  await user.click(syntax);
+  expect(screen.getByText(/author:@me is your GitHub account/)).toBeVisible();
+});

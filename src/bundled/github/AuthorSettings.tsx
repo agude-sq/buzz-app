@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Header } from "../../shared/design-system/ui/Header";
@@ -82,33 +83,42 @@ export function AuthorSettings({
               }}
             />
           </Field>
-          <details className="text-body-sm text-subtle">
-            <summary>Rule syntax</summary>
-            <ul className="m-0 mt-2 flex flex-col gap-1 pl-5">
-              <li>
-                allow or deny, then any of author:login, author:/pattern/,
-                org:organization, body:/pattern/ and prefix:text, which runs to
-                the end of the line. A bare allow or deny matches everyone.
-              </li>
-              <li>
-                author:@me is your GitHub account, a bot’s login ends in [bot],
-                and logins match case aside.
-              </li>
-              <li>
-                body: sees a comment’s first 1,000 characters, the most a wake
-                quotes.
-              </li>
-              <li>
-                Patterns are JavaScript regular expressions without
-                backreferences, lookaround or escapes JavaScript reads as plain
-                letters, such as \q.
-              </li>
-              <li>
-                Membership your GitHub account cannot see, or of a misspelled
-                organization, counts as none.
-              </li>
-            </ul>
-          </details>
+          <Accordion
+            variant="form"
+            items={[
+              {
+                value: "syntax",
+                title: "Rule syntax",
+                content: (
+                  <ul className="m-0 flex flex-col gap-1 pl-5 text-body-sm text-subtle">
+                    <li>
+                      allow or deny, then any of author:login, author:/pattern/,
+                      org:organization, body:/pattern/ and prefix:text, which
+                      runs to the end of the line. A bare allow or deny matches
+                      everyone.
+                    </li>
+                    <li>
+                      author:@me is your GitHub account, a bot’s login ends in
+                      [bot], and logins match case aside.
+                    </li>
+                    <li>
+                      body: sees a comment’s first 1,000 characters, the most a
+                      wake quotes.
+                    </li>
+                    <li>
+                      Patterns are JavaScript regular expressions without
+                      backreferences, lookaround or escapes JavaScript reads as
+                      plain letters, such as \q.
+                    </li>
+                    <li>
+                      Membership your GitHub account cannot see, or of a
+                      misspelled organization, counts as none.
+                    </li>
+                  </ul>
+                ),
+              },
+            ]}
+          />
           <Select
             label="When no rule matches"
             value={fallback}
