@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useEffectEvent,
   useId,
   useRef,
   useState,
@@ -71,9 +72,6 @@ export function AgentTabs(props: {
         ? "agent:activity"
         : (sections[0]?.value ?? ""),
   );
-  useEffect(() => {
-    if (props.showSettings) setTab("agent:management");
-  }, [props.showSettings]);
   const [draft, setDraft] = useState({ dirty: false, saving: false });
   const drafts = useRef(new Map<string, { dirty: boolean; saving: boolean }>());
   const reportDraft = useCallback(
@@ -92,6 +90,15 @@ export function AgentTabs(props: {
   const panelPrefix = useId();
   const selected =
     sections.find((section) => section.value === tab) ?? sections[0];
+  const choose = (value: string) => {
+    if (value === selected?.value || draft.saving) return;
+    if (draft.dirty || props.settingsHost.pendingSave) setPendingTab(value);
+    else setTab(value);
+  };
+  const requestSettings = useEffectEvent(() => choose("agent:management"));
+  useEffect(() => {
+    if (props.showSettings) requestSettings();
+  }, [props.showSettings]);
   const settingsSelected =
     selected?.value === "agent:settings" ||
     selected?.value === "agent:management";
@@ -109,11 +116,6 @@ export function AgentTabs(props: {
       ? "agent:management"
       : "agent:settings";
   const panelId = (value: string) => `${panelPrefix}-${value}`;
-  const choose = (value: string) => {
-    if (value === selected?.value || draft.saving) return;
-    if (draft.dirty || props.settingsHost.pendingSave) setPendingTab(value);
-    else setTab(value);
-  };
   // A new transcript request shows Activity, as choosing its tab would.
   const opening = props.initialTranscript?.opening;
   const [asked, setAsked] = useState(opening);
