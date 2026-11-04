@@ -917,64 +917,17 @@ mod tests {
     }
 
     #[test]
-    fn bundled_builderlab_uses_native_grants_for_exact_request_origins() {
+    fn bundled_builderlab_has_no_renderer_network_or_files() {
         let temp = tempfile::tempdir().unwrap();
         let manager =
             buzzodz_plugins::Manager::open(Some(temp.path().into()), "test", false).unwrap();
         let grants = manager.host_grants("block.builderlab", "bundled").unwrap();
-        if option_env!("BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG").is_some_and(|c| !c.is_empty()) {
-            // FI builds reach Builderlab only through the native forwarder.
-            assert!(grants
-                .federated_identity
-                .is_some_and(|grant| !grant.operations.is_empty()));
-            assert!(!grants.files && grants.network_origins.is_empty());
-            return;
-        }
-        assert!(grants.federated_identity.is_none());
+        // Builderlab is reached only through the native FI forwarder.
+        assert!(!grants.files && grants.network_origins.is_empty());
         assert_eq!(
-            grants.files,
-            buzzodz_plugins::apps_control_plane(buzzodz_plugins::BUILDERLAB_ORIGIN).is_some()
+            grants.federated_identity.is_some(),
+            option_env!("BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG").is_some_and(|c| !c.is_empty())
         );
-        if let Some(origin) =
-            buzzodz_plugins::apps_control_plane(buzzodz_plugins::BUILDERLAB_ORIGIN)
-        {
-            let home = temp.path().canonicalize().unwrap();
-            let archive = home.join("app.tar.gz");
-            std::fs::write(&archive, b"gz").unwrap();
-            assert_eq!(
-                upload_path(
-                    &grants,
-                    &reqwest::Url::parse(origin).unwrap(),
-                    archive.to_str().unwrap(),
-                    Some(&home)
-                )
-                .unwrap(),
-                archive
-            );
-        }
-        let origin = grants
-            .network_origins
-            .first()
-            .map(String::as_str)
-            .unwrap_or("https://app.builderlab.xyz");
-        let (url, _, _) = validate_request(&request(&format!(
-            "{origin}/api/goose/v1/auth/login/exchange"
-        )))
-        .unwrap();
-        assert_eq!(
-            allows_origin(&grants, &url),
-            !grants.network_origins.is_empty()
-        );
-        let mut other = url;
-        other
-            .set_port(Some(if other.port() == Some(8443) {
-                9443
-            } else {
-                8443
-            }))
-            .unwrap();
-        let (url, _, _) = validate_request(&request(other.as_str())).unwrap();
-        assert!(!allows_origin(&grants, &url));
     }
 
     #[test]

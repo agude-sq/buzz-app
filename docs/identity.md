@@ -5,10 +5,9 @@ welcome screen when no human key exists on this device: **Buzz** — "Your peopl
 your agents, your projects — all in one place." — with **Sign in with Builderlab**
 (the label the Buzz mobile client uses; first-run copy never names the sign-in
 provider) and a live **Community URL** field with **Continue** beside it (the
-same field and normalisation as Join a community below). Sign in runs the
-bundled Builderlab plugin's browser sign-in under that plugin's own native
-network grant; that credential is not yet shared with Settings → Integrations →
-Builderlab. A failed or canceled sign-in shows *Couldn’t sign in* with the
+same field and normalisation as Join a community below). Sign in is the one
+Builderlab sign-in every Builderlab feature uses, the native NIP-FI session
+described next. A failed or canceled sign-in shows *Couldn’t sign in* with the
 error and **Back** to the welcome screen. The welcome screen carries the
 onboarding artwork and wordmark, and every later first-run page sits on the
 same artwork; pages without a finished design are plain black-and-white
@@ -16,12 +15,12 @@ wireframes. When a page replaces another, focus moves to the new page's
 heading unless the page focuses a field itself, and **Back** returns focus to
 the choice that opened the page.
 
-In builds with a sign-in server, which is every build unless it opts out or
-names another Builderlab deployment (see
-[configuration](configuration.md#federated-identity-build-input)), the
-bundled Builderlab plugin has no network grant of its own: its Builderlab calls
-go through the native FI session (#1461). There, **Sign in with Builderlab** is the
-native [organization sign-in](#native-federated-session-module), whose browser
+A build's Builderlab is its first sign-in server, the built-in one unless the
+build adds another (see
+[configuration](configuration.md#federated-identity-build-input)). The bundled
+Builderlab plugin has no network or file grant: its Builderlab calls go through
+the native FI session (#1461). **Sign in with Builderlab** is the native
+[organization sign-in](#native-federated-session-module), whose browser
 step, code exchange and token stay native. A session that already exists,
 including one saved by an earlier run, signs in again, so the browser can
 choose the account; if that sign-in is canceled, first run stops rather than
@@ -76,8 +75,8 @@ Success continues to **Getting ready**, with an animated bee. Detailed operation
 status remains available to screen readers without a visible second line. It first runs **Checking your account**, a real read of the
 Nostr key bound to the signed-in Builderlab account
 (`POST /api/goose/v1/buzz/nostr-identities/current` at the portal that signed
-the user in, authenticated with the first-run session credential and sent
-through the bundled plugin's native grant; `src/features/identity/builderlab-account.ts`,
+the user in, sent through the native forwarder with the NIP-FI session as the
+bundled plugin's installation; `src/features/identity/builderlab-account.ts`,
 sharing the hosted-communities card's routes and reply parsers). A `200` with
 no `identity` means no key is linked (kgoose sends `MISSING_MAPPING` only from
 the community list); any other failure is **Couldn’t finish setup**, naming the
@@ -510,9 +509,10 @@ backup was configured. The service and namespace are paired
 native build-process inputs; unset or empty leaves the feature disabled. Preview
 releases that sign in to `app.builderlab.xyz` set them to that origin's
 `/api/goose` service and the `backup/bb-public/production` namespace. The service URL
-includes its API prefix and must use HTTPS. Existing login credentials are accepted
-only for the matching trusted build origin. Without a qualifying login, backup
-defers without opening a browser or delaying identity readiness.
+includes its API prefix and must use HTTPS. Backup uses the NIP-FI session only
+when the service is the build's Builderlab, at its identity origin and API base
+path. Without a current session, backup defers without opening a browser or
+delaying identity readiness. Recovery keeps its own browser sign-in (below).
 
 The native host validates enrollment and seals with the reviewed HPKE v1 protocol.
 Only encrypted pending bytes and public completion metadata are saved in the OS
@@ -536,7 +536,7 @@ First run's **Backing up your key** is a pass of this uploader. It saves the
 automatic choice for the key, hands the first-run Builderlab sign-in to the
 uploader, waits up to 60 seconds for the pass that handoff starts, and then
 hands the sign-in back, whatever the outcome; an earlier pass's result never
-answers it. In an FI build the sign-in is the session the Builderlab plugin
+answers it. The sign-in is the NIP-FI session the Builderlab plugin
 also hands the uploader, so after a completed backup it stays with the
 uploader, which runs one more pass; after a failure the uploader has no session
 until the plugin hands it over again, when that session changes or the app
@@ -597,9 +597,8 @@ crosses IPC once, on **Continue with this key**, through `identity_import`; leav
 discards it, and nothing logs or persists it. On the returning-user lane the
 page compares the typed key's derived npub with the account's linked npub in
 the page, before IPC, so a mismatched nsec never reaches native import. The
-**Welcome back** page shows the linked public key and the signed-in email; the first-run
-Builderlab session credential is held by the OAuth session store and sent only
-in the two account reads' `X-BB-Session-Credential` header, never rendered.
+**Welcome back** page shows the linked public key and the signed-in email; the
+NIP-FI session token stays native and is never rendered.
 
 The app UI passes a private string through IPC only during explicit import/export
 interaction. JavaScript/IPC string memory is not guaranteed zeroized. Native
@@ -923,8 +922,9 @@ standard endpoints defined by NIP-FI/NIP-FA. NIP-FI defines the
 `nip-fi-agent+jwt` assertion class and owner checks; that does not establish
 interoperability with another adapter's enrollment endpoints.
 
-In an FI build, Builderlab's remote-agent, hosted-community, known-community,
-Apps viewer and backup calls go through the native FI session. The renderer
+Builderlab's remote-agent, hosted-community, known-community, Decisions, Apps
+viewer and backup calls all go through the native FI session; there is no other
+Builderlab sign-in, except the development broker's in live development. The renderer
 names only the public session revision. For API calls, native checks the
 plugin's authority/operation grant, enabled artifact revision, live
 registration and that revision; the Apps viewer exchange and backup check only
@@ -932,7 +932,7 @@ that the revision is current. Each sends the adapter session as
 `Authorization: Bearer` to the identity origin only. A 401 fails that call
 without ending the session; native then checks the adapter's `GET /v1/session`
 once and ends the session only if the adapter refuses it there. Builderlab's
-Settings card has no sign-out of its own in an FI build: it links to Identity →
+Settings card has no sign-out of its own: it links to Identity →
 Organization sign-in, which ends the shared session.
 
 Builderlab Apps' agent tools use the same session, as `bl apps` does. Only the

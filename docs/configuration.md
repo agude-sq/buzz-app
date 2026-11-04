@@ -9,7 +9,7 @@ Build defaults are readable binary data, **never secret storage**.
 | Input | Consumer and boundary |
 | --- | --- |
 | `BUZZ_EXTERNAL_MCP_COMMUNITIES` | Frontend build: space-separated secure community origins allowed to authorize external MCP access. Empty disables access. See below. |
-| `BUZZ_BUILDERLAB_URL` | Shared frontend/native build: public login URL and the bundled plugin's native grants; no runtime override. |
+| `BUZZ_BUILDERLAB_URL` | Shared frontend/native build: the live development broker's Builderlab, and whether a build without an added sign-in server keeps the built-in one; no runtime override. See below. |
 | `BUZZ_BUILDERLAB_APPS_DOMAIN` | Shared frontend/native build: exact Apps cookie domain paired with the login origin for native viewer SSO; no runtime override. |
 | `BUZZ_DEFAULT_COMMUNITY_URL` | Packaged frontend build: secure relay origin to select once, after identity setup, only when this viewer has no saved community record. Saved choices, including Personal space, always win. Unset in OSS builds. |
 | `BUZZ_DATABRICKS_HOST` | Frontend build and dev server: `https://` Databricks workspace URL passed as `DATABRICKS_HOST` to every bundled `goose-acp`, which then prefers it to the host in goose's config. Unset in OSS builds. See [Databricks host](#databricks-host). |
@@ -84,24 +84,21 @@ builds.
 
 ## Builderlab URL build input
 
-Development and packaged builds default to `https://app.builderlab.xyz`, the
-built-in sign-in server below. To use another deployment, set `BUZZ_BUILDERLAB_URL`
-in repository-root `.env.local` for development, or in the process running
-`bin/pnpm build` / `bin/pnpm tauri build` for packaging:
-
-```sh
-BUZZ_BUILDERLAB_URL=https://app.builderlab.xyz bin/pnpm tauri build
-```
-
 Builderlab is the build's first sign-in server below: its identity origin with
 `apiBasePath` less its `/api/goose/` suffix (another API base leaves Builderlab
-unconfigured), and sign-in uses that server's native session, which is kept in
-the system keyring and survives a restart. Unset or set to
-`https://app.builderlab.xyz`, `BUZZ_BUILDERLAB_URL` keeps the built-in server.
-Another origin, or an empty value, turns it off when nothing is added, and the
-bundled Builderlab plugin keeps its own in-memory login against this origin.
-Alongside an added sign-in server, a nonempty `BUZZ_BUILDERLAB_URL` fails the
-build.
+unconfigured). Every Builderlab feature (hosted agents and communities, known
+communities, Decisions, Apps, key backup) uses that server's one native
+session, which is kept in the system keyring and survives a restart. To use
+another deployment, add its sign-in server below, such as the
+[staging descriptor](#builderlab-staging).
+
+`BUZZ_BUILDERLAB_URL` is set in repository-root `.env.local` for development,
+or in the process running `bin/pnpm build` / `bin/pnpm tauri build` for
+packaging. Unset or set to `https://app.builderlab.xyz`, it keeps the built-in
+server. Another origin, or an empty value, turns it off when nothing is added;
+such a build has no Builderlab, except that live development signs in to this
+origin through the development broker. Alongside an added sign-in server, a
+nonempty `BUZZ_BUILDERLAB_URL` fails the build.
 
 ## Federated identity build input
 
@@ -153,6 +150,19 @@ broker on.
 }
 ```
 
+### Builderlab staging
+
+There is no built-in staging server. A build that signs in to Builderlab staging
+adds it:
+
+```sh
+BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG='{"version":1,"id":"bb-public-staging","identityOrigin":"https://app.builderlabstaging.xyz","communityHosts":["*.communities.public.builderlabstaging.xyz","communities.public.builderlabstaging.xyz"],"adapterBase":"https://app.builderlabstaging.xyz/api/goose","apiBasePath":"/api/goose/"}'
+```
+
+Staging is then the build's Builderlab, with the built-in production server
+after it for the public communities. A native test parses this exact
+descriptor, so keep the two in step.
+
 `signIn` and `organization` are optional. `signIn` is `on-demand` by default:
 the app asks for organization sign-in only when a protected community refuses
 the viewer, or from Settings → Identity. `at-launch` signs in before the app
@@ -162,42 +172,37 @@ used in that sign-in copy, up to 64 characters. Neither is part of the deploymen
 fingerprint, so changing them keeps saved sessions. Each server's sessions are
 stored under its own fingerprint, so adding servers keeps those saved before.
 
-The first-run welcome screen's **Sign in with email** is the native
-organization sign-in in an FI build (see [identity](identity.md)).
+The first-run welcome screen's **Sign in with email** is this native
+organization sign-in (see [identity](identity.md)).
 
 Vite uses its existing environment loader; the native plugin-manager build reads
 repository-root `.env.local` and process values using the native dotenv pattern.
-For desktop, supply the full URL in `.env.local` or the build process environment
-so both stages receive it. Vite's additional `.env` and mode-specific files do
-not configure native grants. Process values take precedence, including an
-explicit empty value. Set `BUZZ_BUILDERLAB_URL=` to leave login unconfigured and
-clear the bundled plugin's native grants. The desktop release workflow leaves it
-unset; see [release configuration](releases.md#builderlab-url).
+For desktop, supply `BUZZ_BUILDERLAB_URL` in `.env.local` or the build process
+environment so both stages receive it. Vite's additional `.env` and mode-specific
+files do not configure native code. Process values take precedence, including an
+explicit empty value. The desktop release workflow leaves it unset; see
+[release configuration](releases.md#builderlab-url).
 
-Any HTTPS host is supported, including an explicit port or deployment path. URL
-credentials, query parameters and fragments are rejected by the native build.
-The desktop's native plugin catalog supplies the effective manifest, granting
-the configured URL's exact origin. For recognized Builderlab deployments, its
-existing Apps policy also grants file access and the mapped control-plane origin
-(`https://compose-ctrl.builderlab.xyz` for production). Never put credentials in
-this input.
+The bundled Builderlab plugin has no renderer network or file grant in any
+build. In a build with a sign-in server, the plugin manager grants it only the
+native forwarder's Builderlab routes for that server's session; Apps deploys go
+through the same session to the control plane mapped from its identity origin
+(`https://compose-ctrl.builderlab.xyz` for production). The live development
+broker serves the plugin itself. Never put credentials in either input.
 
-The build origin also controls whether a Builderlab session can be reused by
-identity backup when its separately configured service URL has the same origin.
-Backup still requires its own service URL, namespace and user choice. The existing
-identity-binding validator accepts production Builderlab or the configured origin;
-production binding was already allowed before this default.
-
-The bundled Builderlab login consumes this public URL and appends `/api/goose`.
+Identity backup uses the session only when its separately configured service URL
+is the build's Builderlab, at the same origin and API base path. Backup still
+requires its own service URL, namespace and user choice. The existing
+identity-binding validator accepts production Builderlab or the configured origin.
 
 Native viewer SSO also needs the exact Apps domain in
-`BUZZ_BUILDERLAB_APPS_DOMAIN`, for example `apps.example.com` for a configured
-login at `https://login.example.com`. Set both inputs in the same local/build
-environment. Only the public production login has a default Apps domain; other
-deployments supply their mapping through build configuration. An explicit empty
-domain disables native SSO. A missing mapping or an exchange endpoint returning
-404 keeps the account-isolated browser-login path. Authentication, permission,
-transport and other server errors do not fall back.
+`BUZZ_BUILDERLAB_APPS_DOMAIN`, for example `apps.example.com` for a Builderlab
+at `https://login.example.com`. Set it in the same local/build environment. Only
+the public production Builderlab has a default Apps domain; other deployments
+supply their mapping through build configuration. An explicit empty domain
+disables native SSO. A missing mapping or an exchange endpoint returning 404
+leaves the app's own website login in its account-isolated guest.
+Authentication, permission, transport and other server errors do not fall back.
 
 Restart desktop development after changing this input so Vite and the native
 grant rebuild together; browser-only development needs a Vite restart. Production

@@ -455,6 +455,28 @@ mod tests {
         assert_eq!(ids(&rebuilt), ["bb-block", "bb-public"]);
     }
 
+    /// The staging descriptor docs/configuration.md documents, verbatim.
+    #[test]
+    fn the_documented_staging_descriptor_is_valid() {
+        const STAGING: &str = r#"{"version":1,"id":"bb-public-staging","identityOrigin":"https://app.builderlabstaging.xyz","communityHosts":["*.communities.public.builderlabstaging.xyz","communities.public.builderlabstaging.xyz"],"adapterBase":"https://app.builderlabstaging.xyz/api/goose","apiBasePath":"/api/goose/"}"#;
+        assert!(include_str!("../../../docs/configuration.md").contains(STAGING));
+        let config = Config::parse(STAGING).unwrap();
+        assert_eq!(
+            config.endpoint("/v1/login/start").as_str(),
+            "https://app.builderlabstaging.xyz/api/goose/v1/login/start"
+        );
+        for relay in [
+            "wss://one.communities.public.builderlabstaging.xyz",
+            "wss://communities.public.builderlabstaging.xyz",
+        ] {
+            assert!(config.matches_relay(relay).unwrap(), "{relay}");
+        }
+        assert_eq!(
+            ids(&compiled(Some(STAGING), None, None).unwrap()),
+            ["bb-public-staging", "bb-public"]
+        );
+    }
+
     #[test]
     fn a_community_has_at_most_one_server() {
         let mut value = descriptor();
