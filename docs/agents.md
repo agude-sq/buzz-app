@@ -172,11 +172,13 @@ Buzz keeps identity, tools, hooks, and session controls with their existing
 owners. Adapter unload or session abort stops owned processes and rejects new
 work. Cleanup preserves the adapter's saved target mapping. A missing target
 returns `code: "EXECUTION_SESSION_RESET_REQUIRED"`; the harness must not resume
-old state in an empty replacement. Codex uses this contract to run `codex app-server` on the target. Each conversation
+old state in an empty replacement.
+
+Codex uses this contract to run `codex app-server` on the target. Each conversation
 session keeps its key and workspace across later turns and app restarts. **Start
 a new session** requests another allocation. **Interrupt** stops pending setup
-and keeps the key for retry. Activity and usage read the saved session inventory;
-settings and model discovery do not create targets.
+and keeps the key for retry. Activity reads the saved session inventory. Remote
+usage is unavailable. Settings and model discovery do not create targets.
 
 Harness plugins register agent types with the Agents service. An agent type owns
 the defaults, migration policy, per-agent settings tabs, model discovery and run
