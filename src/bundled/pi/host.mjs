@@ -1033,8 +1033,11 @@ export function serve({
         if (!initial) send(placed(opened, id));
       }
       for (const slot of [...(live.tools ?? []), ...(live.nestedTools ?? [])]) {
-        if (slot.status === "pending" || calls.has(slot.callId)) continue;
-        calls.add(slot.callId);
+        // A step is a start: Pi shows each run of a call running, in a commit
+        // of its own, and a call it blocked goes from pending to done. The
+        // same call ID may come again in a later answer, as another task.
+        if (slot.status !== "running" || calls.has(slot.taskId)) continue;
+        calls.add(slot.taskId);
         const ran = opened.arguments.get(conversation)?.get(slot.callId);
         opened.arguments.get(conversation)?.delete(slot.callId);
         if (initial) continue;

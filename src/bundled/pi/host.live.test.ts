@@ -159,8 +159,10 @@ faux.setResponses([
   fauxAssistantMessage(fauxToolCall("buzz_send", { text: "blocked", final: true }), { stopReason: "toolUse" }),
   fauxAssistantMessage("Blocked by policy"),
 ]);
+const blockedFrom = pi.events.length;
 const blocked = await pi.rpc("deliver", turn("HOOK", "blocked tool"));
 out.blocked = { ...(await pi.rpc("wait", { agent, submission: blocked.submission })), tools: pi.tools.splice(0), conversation: blocked.conversation };
+out.blocked.steps = pi.events.slice(blockedFrom).filter((event) => event.type === "step");
 blockTools = false;
 // A request while the run works steers it.
 rewriteTools = true;
@@ -240,6 +242,15 @@ try {
 out.ran = { wait: await pi.rpc("wait", { agent, submission: ran.submission }) };
 out.ran.events = pi.events.slice(ranFrom).filter((event) => event.type === "placed" || (event.type === "step" && ["bash", "nest"].includes(event.tool))).map(({ type, tool, target, request }) => ({ type, ...(tool ? { tool } : {}), ...(target ? { target } : {}), ...(request ? { request } : {}) }));
 rewriteCommand = false;
+// A later answer may reuse a call ID: each run of it is a step.
+faux.setResponses([
+  () => fauxAssistantMessage(fauxToolCall("bash", { command: "printf one" }, { id: "same" }), { stopReason: "toolUse" }),
+  () => fauxAssistantMessage(fauxToolCall("bash", { command: "printf two" }, { id: "same" }), { stopReason: "toolUse" }),
+  () => fauxAssistantMessage("Ran both"),
+]);
+const againFrom = pi.events.length;
+const again = await pi.rpc("deliver", turn("SAME", "again"));
+out.again = { wait: await pi.rpc("wait", { agent, submission: again.submission }), targets: pi.events.slice(againFrom).filter((event) => event.type === "step" && event.tool === "bash").map((event) => event.target) };
 // A watch whose first value is older than a commit it got takes the commit:
 // the run it shows ended, so a request starts a turn rather than steering.
 staleSnapshot = true;
@@ -662,6 +673,7 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
         arguments: { text: "hi", final: true },
       },
     ]);
+    expect(out.blocked.steps).toEqual([]);
     expect(out.blocked).toMatchObject({
       status: "done",
       tools: [],
@@ -757,6 +769,8 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
       { type: "step", tool: "nest" },
       { type: "step", tool: "bash", target: "printf nested" },
     ]);
+    expect(out.again.wait).toMatchObject({ status: "done", text: "Ran both" });
+    expect(out.again.targets).toEqual(["printf one", "printf two"]);
     expect(out.stale.wait).toMatchObject({ status: "done", text: "Fresh" });
     expect(out.stale.saw).toEqual(["stale"]);
     expect(out.toolStop.wait).toMatchObject({
