@@ -5,8 +5,7 @@ import { createElement, useSyncExternalStore } from "react";
 import type { PluginModule } from "../../../plugins/api";
 import type { PanelProps } from "../../../features/panels/service";
 import type { Host } from "../../../features/host/service";
-import type { OAuthSession } from "../oauth/session";
-import { nativeBuilderlab, type BuilderlabSession } from "../session";
+import type { BuilderlabSession } from "../session";
 import {
   createAppsClient,
   federatedTransport,
@@ -54,9 +53,8 @@ export function applyApps(
   session: BuilderlabSession,
   /** Whether Settings can sign in; otherwise the app's own browser login is used. */
   loginAvailable: boolean,
-  /** The legacy browser sign-in of a build without NIP-FI; an FI build's
-   * session goes through native instead. */
-  legacy?: OAuthSession,
+  /** The development broker's Apps calls; otherwise they go through the
+   * native NIP-FI forwarder, which holds the session. */
   dev?: Pick<Host, "request" | "upload">,
 ) {
   // Cordis wraps service functions on access; keep React's component identity.
@@ -101,19 +99,13 @@ export function applyApps(
     component: AppView,
   });
   const base = controlPlane();
-  if (!base || (!legacy && !dev && !nativeBuilderlab())) return;
-  // An FI build's tools call through native, which holds the session.
+  if (!base) return;
   const apps = () =>
-    dev
-      ? createAppsClient(ctx.host, session, base, dev)
-      : legacy
-        ? createAppsClient(ctx.host, legacy, base)
-        : createAppsClient(
-            ctx.host,
-            session,
-            base,
-            federatedTransport(ctx.federatedIdentity, base),
-          );
+    createAppsClient(
+      session,
+      base,
+      dev ?? federatedTransport(ctx.federatedIdentity, base),
+    );
   const reply = (value: unknown) => JSON.stringify(value, null, 2);
   ctx.agents.addTool({
     name: "apps_contract",

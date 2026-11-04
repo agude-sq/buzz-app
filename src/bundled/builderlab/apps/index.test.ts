@@ -1,8 +1,8 @@
+import { createTestSession } from "../test-helpers";
 import { afterEach, expect, it, vi } from "vitest";
 import type { AddedTool } from "../../../buzz-mcp/session-tools";
 import type { BuzzClient } from "../../../buzz-mcp/client";
 import type { HostResponse, HostRequest } from "../../../features/host/service";
-import { createOAuthSession } from "../oauth/session";
 import { applyApps } from "./index";
 
 afterEach(() => {
@@ -22,8 +22,8 @@ async function setup(
   canUseRemoteAgents = true,
 ) {
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", url);
-  const session = createOAuthSession(async () => ({
-    value: "session",
+  const session = createTestSession(async () => ({
+    revision: "session",
     account: {
       subject: "auth0|owner",
       email: "",
@@ -60,7 +60,9 @@ async function setup(
     host: { request: respond, upload: respond },
     agents: { addTool: (tool: AddedTool) => tools.set(tool.name, tool) },
   };
-  applyApps(ctx as never, session, true, session);
+  // The calls go through a transport as the broker's do; the NIP-FI
+  // forwarder's own test is below.
+  applyApps(ctx as never, session, true, ctx.host);
   const call = (name: string, args: Record<string, unknown>, context = {}) => {
     const tool = tools.get(name);
     if (!tool) throw new Error(`No tool ${name}`);
@@ -125,9 +127,8 @@ it("adds the app tools only for a tenant with an Apps control plane", async () =
   );
 });
 
-it("calls through the NIP-FI session in an FI build, which has no browser sign-in", async () => {
+it("calls through the NIP-FI forwarder, which adds the session", async () => {
   const { ctx, respond, session } = await setup();
-  vi.stubEnv("VITE_BUZZ_FEDERATED_IDENTITY", "1");
   const tools = new Map<string, AddedTool>();
   ctx.agents.addTool = (tool: AddedTool) => tools.set(tool.name, tool);
   const request = vi.fn(async ({ path }: { path: string }) =>

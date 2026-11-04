@@ -858,7 +858,7 @@ it.each([false, true])(
     const sessions = new BrowserSessions(platform);
     const lifetime = new AbortController();
     const builderlab = {
-      credential: "private",
+      federated: "private",
       storage: "viewer-test",
       signal: lifetime.signal,
     };
@@ -905,7 +905,7 @@ it("restores the last approved app after eviction instead of a later consent tic
   const sessions = new BrowserSessions(platform);
   const lifetime = new AbortController();
   const builderlab = {
-    credential: "private",
+    federated: "private",
     storage: "viewer-test",
     signal: lifetime.signal,
   };

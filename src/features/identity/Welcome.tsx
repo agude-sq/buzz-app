@@ -10,13 +10,12 @@ import {
 } from "react";
 import { onboardingTransition } from "./onboarding-transition";
 import { npubEncode } from "nostr-tools/nip19";
-import type { Credential } from "../../bundled/builderlab/oauth/browser";
 import {
-  bundledHost,
+  createFirstRunLogin,
   firstRunCredential,
   type FirstRunIdentity,
 } from "../../bundled/builderlab/oauth/first-run";
-import { createOAuthSession } from "../../bundled/builderlab/oauth/session";
+import type { Credential } from "../../bundled/builderlab/session";
 import { communityDestination } from "../communities/destination";
 import { FindCommunity, type JoinConsent } from "../communities/FindCommunity";
 import type { FoundCommunity } from "../communities/find-community";
@@ -42,7 +41,6 @@ import {
   type SessionSnapshot,
 } from "../federated-identity/service";
 import {
-  builderlabAccount,
   type CommunityList,
   federatedBuilderlabAccount,
   type FirstRunAccount,
@@ -88,23 +86,20 @@ import { WireframeScreen } from "./Wireframe";
 
 /**
  * The signed-in account: the development seed when a dev server set one
- * (production builds define it empty), else the build URL's kgoose through
- * the same bundled grant the sign-in used (in an FI build, `federated`'s
- * forwarder), and the identity's native uploader.
+ * (production builds define it empty), else kgoose through the same NIP-FI
+ * forwarder the sign-in used, and the identity's native uploader.
  */
 const firstRunAccount = (
   credential: Credential,
   identity: Identity,
-  federated?: FirstRunIdentity,
+  federated: FirstRunIdentity,
 ) => {
   const seed = parseFirstRunAccountSeed(
     import.meta.env.VITE_BUZZ_FIRST_RUN_ACCOUNT,
   );
   return seed
     ? seededAccount(seed, identity)
-    : federated
-      ? federatedBuilderlabAccount(credential, federated, identity)
-      : builderlabAccount(credential, bundledHost.request, identity);
+    : federatedBuilderlabAccount(credential, federated, identity);
 };
 
 /**
@@ -117,9 +112,16 @@ export function Welcome({
   invites,
   children,
   federatedIdentity,
-  connect = (signal) => firstRunCredential(signal, federatedIdentity),
+  connect = federatedIdentity &&
+    ((signal) => firstRunCredential(signal, federatedIdentity)),
+  // Only the default `connect`, which needs `federatedIdentity`, signs in
+  // without an `account`.
   account = (credential, identity) =>
-    firstRunAccount(credential, identity, federatedIdentity),
+    firstRunAccount(
+      credential,
+      identity,
+      federatedIdentity as FirstRunIdentity,
+    ),
   servers = signInServers,
 }: {
   identity: Identity;
@@ -132,12 +134,14 @@ export function Welcome({
   invites: Pick<ReturnType<typeof createInviteIntent>, "open">;
   children: ReactNode;
   /**
-   * An FI build's NIP-FI session as the bundled Builderlab plugin calls it
+   * The NIP-FI session as the bundled Builderlab plugin calls it
    * (`bundledFederatedIdentity`): sign-in and the account's calls go through
-   * it instead of the plugin's network grant, which an FI build lacks.
+   * it. A build without a Builderlab sign-in server has none, and first run
+   * offers no Builderlab sign-in.
    */
   federatedIdentity?: FirstRunIdentity | undefined;
-  connect?: (signal: AbortSignal) => Promise<Credential>;
+  /** Builderlab sign-in; without it, first run offers none. */
+  connect?: ((signal: AbortSignal) => Promise<Credential>) | undefined;
   /** The account for a credential `connect` returned. */
   account?:
     | ((credential: Credential, identity: Identity) => FirstRunAccount)
@@ -146,7 +150,15 @@ export function Welcome({
   servers?: () => Promise<readonly SessionSnapshot[]>;
 }) {
   const state = useSyncExternalStore(identity.subscribe, identity.snapshot);
-  const [login] = useState(() => createOAuthSession(connect));
+  const [login] = useState(() =>
+    createFirstRunLogin(
+      connect ??
+        (() =>
+          Promise.reject(
+            new Error("This Buzz build has no Builderlab sign-in."),
+          )),
+    ),
+  );
   // Counts canceled sign-ins: a sign-in continues only if none was canceled
   // since it started, since the session may by then hold a later sign-in.
   const cancels = useRef(0);
@@ -458,7 +470,7 @@ export function Welcome({
             throw new Error("Sign in again to finish backing up your key.");
           const credential = login.credential();
           if (credential.account.subject !== original.subject) {
-            login.signOut();
+            login.cancel();
             throw new Error(
               `Sign in as ${original.email} to back up this key.`,
             );
@@ -899,19 +911,21 @@ export function Welcome({
           </>
         }
       >
-        <Button
-          variant="prominent"
-          size="lg"
-          onClick={() => {
-            if (login.snapshot().status === "pending") {
-              cancels.current++;
-              login.cancel();
-            }
-            void signIn();
-          }}
-        >
-          Sign in with Builderlab
-        </Button>
+        {connect && (
+          <Button
+            variant="prominent"
+            size="lg"
+            onClick={() => {
+              if (login.snapshot().status === "pending") {
+                cancels.current++;
+                login.cancel();
+              }
+              void signIn();
+            }}
+          >
+            Sign in with Builderlab
+          </Button>
+        )}
         <Button
           size="lg"
           variant="ghost"
@@ -1069,7 +1083,8 @@ export function Welcome({
             void hostedByThisBuilderlab(found, servers).then((hosted) => {
               if (lookup !== lookups.current) return;
               if (hosted) void signIn();
-              else pause("connect-choice");
+              // Without a Builderlab sign-in, a key is the only way in.
+              else pause(connect ? "connect-choice" : "key-import");
             });
           }}
           titleId="welcome-title"

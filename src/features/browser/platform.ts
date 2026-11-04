@@ -89,9 +89,7 @@ export function createBrowserPlatform(): BrowserPlatform {
         builderlab: builderlab
           ? "broker" in builderlab
             ? { broker: builderlab.broker }
-            : "federated" in builderlab
-              ? { federated: builderlab.federated }
-              : { credential: builderlab.credential }
+            : { federated: builderlab.federated }
           : null,
       });
       if (builderlab) {

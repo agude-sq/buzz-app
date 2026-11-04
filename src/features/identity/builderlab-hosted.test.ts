@@ -47,33 +47,7 @@ it("follows the build's first compiled server, by its community hosts", async ()
   );
 });
 
-it("matches the built-in server's hosts with no compiled server, when the build's Builderlab is built in", async () => {
-  // The pinned development broker, or a build with FI set empty, as on main.
-  const dev = (input: string, build: string) =>
-    hostedByThisBuilderlab({ url: relayOrigin(input) }, async () => [], build);
-  expect(
-    await dev(
-      "wss://design.communities.buzz.xyz",
-      "https://app.builderlab.xyz",
-    ),
-  ).toBe(true);
-  expect(
-    await dev("wss://communities.buzz.xyz", "https://app.builderlab.xyz/"),
-  ).toBe(true);
-  expect(
-    await dev("wss://a.b.communities.buzz.xyz", "https://app.builderlab.xyz"),
-  ).toBe(false);
-  // Another Builderlab deployment, or none, hosts nothing.
-  expect(
-    await dev(
-      "wss://design.communities.buzz.xyz",
-      "https://block.builderlab.xyz",
-    ),
-  ).toBe(false);
-  expect(await dev("wss://design.communities.buzz.xyz", "")).toBe(false);
-});
-
-it("treats every community as unhosted without a compiled server or the built-in Builderlab", async () => {
+it("treats every community as unhosted without a compiled server", async () => {
   expect(await hosted("wss://design.communities.buzz.xyz", [])).toBe(false);
   expect(
     await hostedByThisBuilderlab(

@@ -1,7 +1,6 @@
 // Builderlab as a decision provider: the user's Builderlab sign-in, which
-// native code sends with each call. A NIP-FI session, in an FI build or when
-// the built-in server offers it, is named by its revision; its token never
-// leaves native. It is offered only while that sign-in's account may use
+// native code sends with each call. The NIP-FI session is named by its
+// revision; its token never leaves native. It is offered only while that sign-in's account may use
 // decisions; see `offerBuilderlabDecisions`. Settings >
 // Decisions API shows the same sign-in control as this plugin's card while it
 // is selected.
@@ -20,25 +19,13 @@ export type BuilderlabDecide = (
   request: unknown,
   credential: Credential,
 ) => Promise<unknown>;
-const field = (credential: Credential, name: "value" | "revision") => {
-  const value = (credential as Record<string, unknown>)[name];
-  return typeof value === "string" ? value : undefined;
-};
-/** Whether `credential` is a NIP-FI session's, which carries only its public
- * revision, rather than a browser sign-in's value. The session in use
- * decides, not the build: the built-in server's can be either. */
-const federated = (credential: Credential) =>
-  field(credential, "value") === undefined &&
-  field(credential, "revision") !== undefined;
 export const nativeBuilderlabDecide = (): BuilderlabDecide | undefined =>
   isTauri()
     ? (request, credential) =>
         invoke("decide", {
           backend: "builderlab",
           request,
-          ...(federated(credential)
-            ? { federated: field(credential, "revision") }
-            : { session: field(credential, "value") ?? "" }),
+          federated: credential.revision,
         })
     : undefined;
 
@@ -136,17 +123,11 @@ export function builderlabProvider(
         string,
         unknown
       >;
-      // Native reports `session_expired` only for a legacy sign-in's
-      // Builderlab 401. Then only the refused sign-in ends; a newer one
-      // stays. A NIP-FI session never ends here: signing out would end the
-      // whole session, and native asks the adapter instead. A
-      // refusal of decisions alone (`unauthorized`) keeps the sign-in that
-      // other Builderlab features share.
-      if (reason === "session_expired") {
-        if (!federated(credential) && signedIn() === credential)
-          session.signOut();
+      // A Builderlab 401 refuses this call only, never the sign-in that
+      // other Builderlab features share: native asks the adapter whether a
+      // NIP-FI session ended, and the broker owns its own.
+      if (reason === "session_expired")
         return { outcome: "failed", reason: "unauthorized" };
-      }
       // The host checks the reply's shape and answers.
       return (
         outcome === "answered"

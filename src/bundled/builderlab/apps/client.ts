@@ -1,7 +1,7 @@
 // The Apps Platform control plane, called with the plugin's Builderlab
 // sign-in as `bl apps` calls it (block/builderlab-cli `src/bl/apps.rs`): the
-// session goes as `Authorization: BBIdentity <session>`, and the gateway
-// exchanges it for the control plane's own token.
+// transport sends the session as `Authorization: BBIdentity <session>`, and
+// the gateway exchanges it for the control plane's own token.
 import type { FederatedIdentity } from "../../../features/federated-identity/service";
 import type { Host, HostResponse } from "../../../features/host/service";
 import type { BuilderlabSession } from "../session";
@@ -43,31 +43,24 @@ export function federatedTransport(
       throw new Error("Apps calls go to this server's control plane");
     return url.slice(base.length);
   };
-  // Native sets the session itself; the client's empty one never goes.
-  const headers = (all: Readonly<Record<string, string>> = {}) =>
-    Object.fromEntries(
-      Object.entries(all).filter(
-        ([name]) => name.toLowerCase() !== "authorization",
-      ),
-    );
   return {
-    request: ({ url, method, headers: all, body, timeoutMs }) =>
+    request: ({ url, method, headers = {}, body, timeoutMs }) =>
       identity.request({
         apps: true,
         path: path(url),
         ...(method ? { method } : {}),
-        headers: headers(all),
+        headers,
         ...(body === undefined ? {} : { body }),
         ...(timeoutMs === undefined ? {} : { timeoutMs }),
       }),
-    upload: ({ url, headers: all, fields, file }) => {
+    upload: ({ url, headers = {}, fields, file }) => {
       if (fields && Object.keys(fields).length)
         throw new Error("Apps deploys send only the archive");
       return identity.request({
         apps: true,
         path: path(url),
         method: "POST",
-        headers: headers(all),
+        headers,
         upload: file,
       });
     },
@@ -75,34 +68,28 @@ export function federatedTransport(
 }
 
 export function createAppsClient(
-  host: Host,
   session: BuilderlabSession,
   base: string,
-  /** Sends each call authenticated itself, such as over the NIP-FI session. */
-  transport?: Transport,
+  /** Sends each call authenticated with the session: the NIP-FI forwarder
+   * (`federatedTransport`) or the development broker. */
+  http: Transport,
 ) {
-  const http = transport ?? host;
   // One client belongs to one tool operation, including all its HTTP steps.
   let owner: ReturnType<BuilderlabSession["credential"]> | undefined;
-  const credential = () => {
+  const signedIn = () => {
     if (session.snapshot().status !== "signed-in")
       throw new Error(`Builderlab is not signed in. ${SIGN_IN}`);
     const current = session.credential();
     if (owner && current !== owner)
       throw new Error("Builderlab sign-in changed. Start a new Apps request.");
     owner = current;
-    if (transport) return "";
-    if (!("value" in current) || typeof current.value !== "string")
-      throw new Error(SIGN_IN);
-    return current.value;
   };
-  const headers = (secret: string) => ({
+  const headers = {
     Accept: "application/json",
-    Authorization: `BBIdentity ${secret}`,
     "X-Hotpod-Agent-Client-Version": PROTOCOL,
-  });
+  };
   /** The JSON object a call answered, or the error the agent can act on. */
-  const answer = (secret: string, response: HostResponse, what: string) => {
+  const answer = (response: HostResponse, what: string) => {
     let body: Json = {};
     try {
       body = object(JSON.parse(response.body));
@@ -122,17 +109,11 @@ export function createAppsClient(
       ]
         .filter(Boolean)
         .join(": ");
-      // Never hand the session on, even if a server echoed it.
       throw new Error(
-        `${what} failed (HTTP ${response.status})${detail ? `: ${detail}` : ""}`.replaceAll(
-          secret || "\u0000",
-          "[redacted]",
-        ),
+        `${what} failed (HTTP ${response.status})${detail ? `: ${detail}` : ""}`,
       );
     }
-    return JSON.parse(
-      JSON.stringify(body).replaceAll(secret || "\u0000", "[redacted]"),
-    );
+    return body;
   };
   const call = async (
     method: "GET" | "POST" | "PUT" | "DELETE",
@@ -140,19 +121,19 @@ export function createAppsClient(
     what: string,
     body?: Json,
   ): Promise<Json> => {
-    const secret = credential();
+    signedIn();
     const response = await http.request({
       url: `${base}${path}`,
       method,
       headers: {
-        ...headers(secret),
+        ...headers,
         ...(body ? { "Content-Type": "application/json" } : {}),
       },
       ...(body ? { body: JSON.stringify(body) } : {}),
       ...(path.endsWith("/initialize") ? { timeoutMs: 180_000 } : {}),
     });
-    credential();
-    return answer(secret, response, what);
+    signedIn();
+    return answer(response, what);
   };
   const app = (id: string, resource = "") =>
     `/v1/agent/apps/${encodeURIComponent(id)}${resource && `/${resource}`}`;
@@ -178,7 +159,7 @@ export function createAppsClient(
     list: () => call("GET", "/v1/agent/apps?scope=owned", "Listing apps"),
     /** Plans and reserves the exact runtime advertised by this tenant. */
     async create(name: string, profile: RuntimeProfile = "static") {
-      const secret = credential();
+      signedIn();
       const info = object((await contract()).runtime_info);
       const profiles = info.supported_runtime_profiles;
       if (
@@ -244,20 +225,17 @@ export function createAppsClient(
         const detail =
           error instanceof Error ? error.message : "Request failed";
         throw new Error(
-          `Create stopped during ${step} for app_id=${id}: ${detail}. The reservation may already exist; inspect or resume this exact app before creating a replacement.`.replaceAll(
-            secret || "\u0000",
-            "[redacted]",
-          ),
+          `Create stopped during ${step} for app_id=${id}: ${detail}. The reservation may already exist; inspect or resume this exact app before creating a replacement.`,
         );
       }
     },
     /** Uploads `artifact` as the app's next version. */
     async deploy(id: string, artifact: string) {
       if (!http.upload) throw new Error("Deploying needs the Buzz desktop app");
-      const secret = credential();
+      signedIn();
       const response = await http.upload({
         url: `${base}${app(id, "deploy")}`,
-        headers: headers(secret),
+        headers,
         file: {
           field: "artifact",
           path: artifact,
@@ -267,7 +245,7 @@ export function createAppsClient(
       });
       // An accepted upload still returns its IDs after sign-out/account switch.
       // The next readiness request checks the operation's original sign-in.
-      return answer(secret, response, "Deploying") as Json;
+      return answer(response, "Deploying");
     },
     ready: (
       id: string,
