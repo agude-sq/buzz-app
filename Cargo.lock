@@ -19,6 +19,7 @@ dependencies = [
  "bytes",
  "chrono",
  "dirs 6.0.0",
+ "dotenvy",
  "dunce",
  "fs2",
  "futures-lite",
@@ -661,6 +662,7 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "tokio",
  "url",
@@ -773,6 +775,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tauri",
  "tempfile",
  "url",
 ]

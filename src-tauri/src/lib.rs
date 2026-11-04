@@ -52,12 +52,15 @@ use nsec_backup::{
     nsec_restore_wait, NsecBackupHost,
 };
 use nsec_backup_choice::{nsec_backup_choice, nsec_backup_set_choice};
+mod builderlab_session;
 mod clipboard;
 mod jev;
 mod keep_awake;
 #[cfg(target_os = "macos")]
 mod legacy_cli_shortcut;
 mod legacy_communities;
+#[cfg(target_os = "macos")]
+mod media_context_menu;
 #[cfg(any(not(target_os = "macos"), test))]
 mod microphone;
 #[cfg(target_os = "macos")]
@@ -647,6 +650,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         identity_prepare_remote_agent_authorization,
         identity_sign_builderlab_binding,
         federated_identity::federated_identity_snapshot,
+        federated_identity::federated_identity_servers,
         federated_identity::federated_identity_sign_in,
         federated_identity::federated_identity_cancel_sign_in,
         federated_identity::federated_identity_sign_out,
@@ -772,6 +776,9 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         jev::jev_classifier_status,
         jev::jev_classifier_set_key,
         jev::jev_classifier_clear_key,
+        builderlab_session::builderlab_session_load,
+        builderlab_session::builderlab_session_save,
+        builderlab_session::builderlab_session_clear,
         agent_state::app_agent_state_load,
         agent_state::app_agent_state_set,
         decisions::decide,
@@ -944,6 +951,26 @@ pub fn run() {
                     app.manage(stream);
                 }
                 Err(error) => eprintln!("Could not start the media listener: {error}"),
+            }
+            #[cfg(target_os = "macos")]
+            if let Some(main) = app.get_webview_window("main") {
+                let handle = app.handle().clone();
+                let directory = app.path().download_dir().ok();
+                let stream = app
+                    .try_state::<relay::MediaStream>()
+                    .map(|stream| stream.base().to_owned());
+                // Packaged builds keep `devUrl` in their config but never load it.
+                let dev = app
+                    .config()
+                    .build
+                    .dev_url
+                    .clone()
+                    .filter(|_| tauri::is_dev());
+                if let Err(error) = main.with_webview(move |webview| {
+                    media_context_menu::install(&webview, handle, directory, stream, dev)
+                }) {
+                    eprintln!("Could not prepare the media menu: {error}");
+                }
             }
             // Only app-owned storage is created; a development build keeps its agents
             // in the installed app's (`legacy_identifier::agents`). Preview uses the
@@ -1133,6 +1160,8 @@ pub(crate) fn shut_down<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     app.state::<federated_identity::socket::Sockets>().clear();
     app.state::<relay::Spools>()
         .cancel_all(&app.state::<relay::Uploads>());
+    #[cfg(target_os = "macos")]
+    media_context_menu::discard_pending();
     app.state::<clipboard::Clipboard>().release();
     app.state::<HostProcesses>().shutdown();
     host_command::stop_login_shell_probe();

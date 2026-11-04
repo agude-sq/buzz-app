@@ -2,12 +2,16 @@ import { useEffect, useRef, useSyncExternalStore } from "react";
 import { Header } from "../../../shared/design-system/ui/Header";
 import { Button } from "../../../shared/design-system/ui/Button";
 import { brokerBuilderlab } from "../dev-session";
-import { nativeBuilderlab, type BuilderlabSession } from "../session";
+import {
+  autoBuilderlab,
+  nativeBuilderlab,
+  type BuilderlabSession,
+} from "../session";
 
 const kept = () =>
   brokerBuilderlab()
     ? "Your sign-in stays on the development server through app reloads, until you sign out or the session expires."
-    : nativeBuilderlab()
+    : nativeBuilderlab() || autoBuilderlab()
       ? "Buzz keeps your sign-in in your system keychain until you sign out."
       : "Your credential stays in memory until you sign out or close Buzz.";
 
@@ -46,7 +50,8 @@ export function Login({
   // Identity link; focus follows only if the button still had it.
   const action = useRef(false);
   const identityLink = useRef<HTMLButtonElement>(null);
-  const showsIdentity = nativeBuilderlab() && state.status === "signed-in";
+  const showsIdentity =
+    (nativeBuilderlab() || !!state.federated) && state.status === "signed-in";
   useEffect(() => {
     if (!showsIdentity || !action.current) return;
     action.current = false;

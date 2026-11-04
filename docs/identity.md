@@ -16,10 +16,29 @@ wireframes. When a page replaces another, focus moves to the new page's
 heading unless the page focuses a field itself, and **Back** returns focus to
 the choice that opened the page.
 
-In federated-identity builds (`BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG`) the
-bundled Builderlab plugin has no network grant of its own: its Builderlab calls
-go through the native FI session (#1461). There, **Sign in with Builderlab** is the
-native [organization sign-in](#native-federated-session-module), whose browser
+With only the built-in sign-in server (see
+[configuration](configuration.md#federated-identity-build-input)), each
+Builderlab sign-in first sends an uncredentialed `GET {adapterBase}/v1/session`.
+A 404 means the server has no NIP-FI sign-in, so **Sign in with Builderlab** is
+the browser sign-in above. First run saves its credential in the same system
+keychain item the plugin restores, so the plugin is signed in at once and after
+a restart (deleted on sign-out or when Builderlab rejects it at launch). The
+item is the profile's for this build's Builderlab deployment, its origin and
+API base, so a build for another Builderlab never reads, sends or deletes it.
+A save that fails is a retryable sign-in error, and a sign-out stays unfinished
+until the item is deleted. Once a NIP-FI session exists it is the sign-in in
+use, even while its account is loading or failing, and the browser sign-in is
+signed out, revoked and deleted. Builderlab Decisions and the Apps agent tools
+are offered only while that browser sign-in is in use;
+native sends no NIP-FI session to it, as in builds that add a server. Any other answer means NIP-FI sign-in, as below; a network error or
+5xx shows the retryable sign-in error and never falls back to the browser. The
+plugin uses the server's native session whenever one exists, such as after a
+community that requires NIP-FI asked for sign-in, and the browser credential
+otherwise, so it holds both grants.
+
+In builds that add a sign-in server, the bundled Builderlab plugin has no
+network grant of its own: its Builderlab calls go through the native FI session
+(#1461). There, **Sign in with Builderlab** is always the native [organization sign-in](#native-federated-session-module), whose browser
 step, code exchange and token stay native. A session that already exists,
 including one saved by an earlier run, signs in again, so the browser can
 choose the account; if that sign-in is canceled, first run stops rather than
@@ -27,10 +46,10 @@ continuing as the old account, and one that times out fails as *Sign-in did
 not finish*. Setup's account calls then go through the native forwarder as the
 bundled plugin's installation, fenced to that session, and a backup hands the
 uploader the session's revision. Native admission checks only that
-installation's grant, so this works whether or not the plugin has started. The
-forwarder grants no backup-status route, so Welcome back offers no restore and
-an imported key is backed up automatically. The session outlives first run: sign-in
-at launch finds it signed in.
+installation's grant, so this works whether or not the plugin has started.
+*Checking for a backed-up key* (below) goes through the forwarder too, so
+Welcome back offers a restore where the portal accepts the session there. The
+session outlives first run: sign-in at launch finds it signed in.
 
 A URL given on the welcome screen is looked up first, before sign-in and before
 any key exists: **Continue** opens the same **Finding community** page described
@@ -38,10 +57,17 @@ below, which sends only the two unauthenticated GETs, so a typo, an unreachable
 relay or a non-Buzz address fails there with the same classified copy; **Cancel**
 (and **Retry**, when offered) behave as below, except that Cancel returns to the
 welcome screen with the address kept in the field. A build has one Builderlab,
-and the only listed deployment is the public one (`builderlab-hosted.ts`): a
-host under `communities.buzz.xyz` on the default port, or a relay publishing
-that deployment's NIP-11 `self` key, is hosted by this build's Builderlab when
-the origin of `BUZZ_BUILDERLAB_URL` is `https://app.builderlab.xyz`. Such a
+its first sign-in server, and a community is hosted by it when that server's
+`communityHosts` cover the community's host (`builderlab-hosted.ts`). The front
+end reads native's compiled server list and matches with native's own rules
+(`community-hosts.ts`, kept equal to `matches_relay` by shared fixtures): an
+exact host, or one label under a wildcard on the default port. A relay's NIP-11
+`self` key never decides. A build without a sign-in server whose
+`BUZZ_BUILDERLAB_URL` is the built-in Builderlab (`isBuiltInBuilderlab`: the
+pinned development broker, or FI set empty) matches the built-in server's
+`communityHosts` from `built-in-server.json`, as on main; with another or an
+empty Builderlab URL it hosts none. The answer applies only to the lookup that
+asked: Cancel, another address or leaving the screen discards it. Such a
 community requires Builderlab sign-in, so it starts at once there, exactly as
 the welcome screen's own button does, and the welcome screen shows it pending
 (**Cancel sign-in**, with the field disabled); setup then lands on **Join
@@ -50,8 +76,8 @@ instead. Cancel sign-in, and **Back** from a sign-in or setup failure, return
 to the welcome screen with the address kept and do not look it up again. A
 canceled sign-in that finishes later is ignored: it cannot restart setup or use
 a later sign-in's account. Any other found community, including one run by
-another Builderlab deployment, and every community in a build whose
-`BUZZ_BUILDERLAB_URL` is another origin or empty, pauses on **Connect to
+another Builderlab deployment, and every community in a build with neither a
+sign-in server nor the built-in Builderlab URL, pauses on **Connect to
 {host}**: nothing a relay publishes names its sign-in portal, so the user
 chooses. The page says only that Buzz relies on a key for the user's identity; its choices are
 **Sign in with Builderlab**, which signs in at `BUZZ_BUILDERLAB_URL` and
@@ -97,14 +123,15 @@ leaves the lookup unavailable rather than empty, and never fails setup: it only
 decides whether Welcome back offers a restore and whether an import needs
 automatic backup.
 
-**Not linked** pauses on **Get started with Buzz**. **Create my key** creates
-and links a key; **Use an existing key** opens **Enter your private key**. **Use a different
-account** signs out the first-run session and returns to the welcome screen.
+**Not linked** pauses on **Get started with Buzz**, which says the account will
+manage the Buzz identity. **Set me up** creates and links a key; **Use an
+existing key** opens **Enter your private key**. **Use a different account**
+signs out the first-run session and returns to the welcome screen.
 The browser may retain its portal session. This choice page shows the signed-in
 email so the account can be checked before linking a key.
 
 Builderlab setup automatically backs up the created key after linking it to the
-signed-in account and waits for the uploader. The create/import screens disclose
+signed-in account and waits for the uploader. The import screen discloses
 this behavior. A failed backup stays in setup with **Try again**, preserving the
 key on this device; it cannot be bypassed by disabling backup. If the session
 has expired, retry signs in again and must return to the original account before
@@ -165,7 +192,7 @@ counts as done only when kgoose confirms removing the old key, or the account
 then holds no key or the new one. If the old key is still bound (kgoose removes
 nothing when the sign-in is no longer active) or another key is, the step fails
 without Try again.
-Welcome back itself never offers Create my key.
+Welcome back itself never offers Set me up.
 
 Every lane ends the same way. A linked account runs **Finding communities**
 (the same real read) once its key is on the device; the old key's list is not
@@ -493,8 +520,13 @@ Desktop builds configured with `BUZZ_NSEC_BACKUP_SERVICE_URL` and
 `BUZZ_NSEC_BACKUP_NAMESPACE` back up a local identity only after an explicit saved
 automatic-backup choice, Builderlab login, and matching key
 binding. Unset, self-managed, corrupt or mismatched consent prevents all backup
-requests, including retries. These are paired
-native build-process inputs; unset leaves the feature disabled. The service URL
+requests, including retries. An organization-managed build also sets
+`BUZZ_NSEC_BACKUP_CONSENT=managed`: backup then needs no saved choice and
+ignores one, so every local key is backed up, including one created before
+backup was configured. The service and namespace are paired
+native build-process inputs; unset or empty leaves the feature disabled. Preview
+releases that sign in to `app.builderlab.xyz` set them to that origin's
+`/api/goose` service and the `backup/bb-public/production` namespace. The service URL
 includes its API prefix and must use HTTPS. Existing login credentials are accepted
 only for the matching trusted build origin. Without a qualifying login, backup
 defers without opening a browser or delaying identity readiness.
@@ -793,10 +825,11 @@ The native identity service exposes `getBackupChoice()` and
 `setBackupChoice(pubkey, automatic)`. These APIs expose public metadata and do not
 change identity readiness. Reading a choice does not contact a server; saving
 automatic backup wakes the existing native uploader if a session is connected.
-Builderlab first run discloses automatic backup before creating, replacing or
-importing a key, then enables it after linking. There is no separate backup-choice
-screen or failure bypass. Independent imports without Builderlab sign-in do not
-enable backup. Settings retains control over future automatic uploads.
+Builderlab first run discloses automatic backup before replacing or importing a
+key, says the account manages a key it creates, then enables backup after
+linking. There is no separate backup-choice screen or failure bypass.
+Independent imports without Builderlab sign-in do not enable backup. Settings
+retains control over future automatic uploads.
 
 The choice is bound to the current public key and trusted build-configured backup
 service and namespace. Missing or mismatched metadata returns no choice;
@@ -818,10 +851,17 @@ The consent hooks are the base of the draft stack:
 
 Federated identity ([NIP-FI](https://github.com/block/buzz/blob/main/docs/nips/NIP-FI.md),
 [NIP-FA](https://github.com/block/buzz/blob/main/docs/nips/NIP-FA.md)) adds a native
-owner separate from the human Nostr key. Its deployment descriptor is documented
-in [configuration](configuration.md#federated-identity-build-input).
-The native commands return status, authority, revision, optional email, and fixed
-failure codes. Session tokens and assertion headers are native-only.
+owner separate from the human Nostr key, one per compiled sign-in server. The
+list of servers is documented in
+[configuration](configuration.md#federated-identity-build-input). Each relay is
+routed by its host to the server that covers it, never by anything the relay
+publishes; that server issues its assertions and later checks ask it alone. A
+community no server covers connects without a token. The build's first server
+is its Builderlab: the bundled plugin, agent credentials and Settings use its
+session, and the native commands act on it unless given a community `relay`,
+which a community's sign-in prompt passes so it signs in to that community's
+server. The native commands return status, authority, revision, optional email,
+and fixed failure codes. Session tokens and assertion headers are native-only.
 
 Sign-in uses the existing native loopback callback owner with NIP-FA `return_to`
 and an S256 handoff challenge, exchanges the code natively, and verifies the
@@ -831,7 +871,8 @@ replacement. Local expiry, cancellation, and sign-out fence stale work.
 
 FI records use the OS secure-store service
 `xyz.block.buzz.desktop.federated-session` (with `.debug` for Rust debug
-builds), keyed by profile and deployment fingerprint. On macOS one item per
+builds), keyed by profile and each server's deployment fingerprint, so a build's
+first server keeps the sessions it saved as the only server. On macOS one item per
 profile and deployment holds the session and every agent grant, so Keychain
 prompts once; Windows and Linux keep one item per record. Older macOS items
 move into it on read. This is a one-way development migration: close older
@@ -848,8 +889,12 @@ The app's `federatedIdentity` service exposes this public state to the shared
 sign-in UI. Session record revision survives restore and scopes account caches
 without inventing a NIP-FA subject.
 
-NIP-11 discovery from the exact relay carries no FI credential. Valid absent or
-false FI flags retain ordinary Nostr transport. A true flag requires the supported
+NIP-11 discovery from the exact relay carries no FI credential. The community
+requires NIP-FI when its top-level `requires_nip_fi` is true; when that flag is
+absent, `limitation.federated_identity` decides, as before it existed. A false
+`requires_nip_fi` means not required even where the host supports NIP-FI (as a
+shadow-mode host advertises), and a non-boolean one is invalid discovery. Not
+required retains ordinary Nostr transport. Required needs the supported
 client-attached/offline-jwt descriptor and compiled authority mapping. Assertions
 are acquired with native same-key NIP-98 proof and checked for exact audience,
 key, and lifetime. Native HTTP, media, repository Git reads/imports, and socket
@@ -907,6 +952,26 @@ once and ends the session only if the adapter refuses it there. Builderlab's
 Settings card has no sign-out of its own in an FI build: it links to Identity →
 Organization sign-in, which ends the shared session. Builderlab
 Apps' agent tools still need the legacy login and are absent in FI builds.
+
+Settings → Identity → Organization sign-in is the same whichever community is
+open. It lists each server you are signed in to, with its name and origin, the
+account and expiry, **Used by:** the joined communities its hosts cover, and a
+**Sign out** that ends that server's session only. A sign-out native could not
+finish (for example, secure storage refused) stays below the list, naming the
+server, with **Try again**. Communities no server covers are not listed. With no server signed in, it shows the build's Builderlab row to
+sign in from, as before.
+
+When a community refuses a signed-in account (`authorization-denied` or
+`binding-mismatch`), its prompt names the community's server and account, and
+the other joined communities that server covers, and offers **Switch account**:
+it signs out of that server only, signs in to it again, and retries. Other
+servers' sessions are not touched. While it runs the prompt says so, with
+**Cancel sign-in** during the browser step; a canceled, refused or failed step
+names the server and offers **Try again**, which repeats the step that
+failed: after a failed sign-out it signs out again before signing in, so it
+never renews the old account. **Not now** closes the prompt and
+changes nothing. Binding-mismatch recovery points to that
+server's identity origin.
 
 ### Sign in at launch
 
@@ -1031,10 +1096,11 @@ Both validate HTTPS and the `/media/<hash>` URL shape but do not enforce
 saved-community membership; the selected server receives a short-lived token
 scoped to its origin. The scheme signs a fresh 60-second `get` token per request
 and forwards only a bounded single `Range`; non-image/video/audio types (and SVG)
-are served with download disposition and `nosniff`. The main webview does not navigate to protected media for downloads: a narrowly scoped native command authenticates the bounded media GET, saves to the OS Downloads directory without replacing existing files, and rejects unsafe filenames. `relay_upload`
-hashes, signs (`upload` + `x`) and sends the exact bytes JavaScript passes it;
-shared TypeScript (`hostUpload`) owns limits, error mapping and descriptor
-validation. JavaScript never signs kind 24242. Packaged HEIC and video
+are served with download disposition and `nosniff`. The main webview does not navigate to protected media for downloads: a narrowly scoped native command authenticates the bounded media GET, saves to the OS Downloads directory without replacing existing files, and rejects unsafe filenames. On macOS, the main webview's native media menu also saves relay media to Downloads without replacing existing files, but under the blob's `<hash>.<ext>` name rather than the attachment name, and removes the partial file if a download fails or Buzz quits before it finishes. It refuses media of unknown length or larger than the largest video Buzz uploads. The menu omits the items that would copy, open or share the tokened loopback URL, and its Download item when Buzz cannot save it. `relay_upload`
+hashes, signs (`upload` + `x`) and sends the exact bytes JavaScript passes it,
+then requires the successful response's SHA-256 and size to match those bytes.
+Shared TypeScript (`hostUpload`) owns limits, error mapping and the remaining
+descriptor validation. JavaScript never signs kind 24242. Packaged HEIC and video
 preparation uses fixed demuxers and ffmpeg arguments in the native host, then
 hashes and uploads only the converted bytes; JavaScript receives the descriptor,
 not the prepared file. ffmpeg must be installed on the computer.

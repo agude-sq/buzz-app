@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import type { Host } from "../../../features/host/service";
-import { browserCredential, type BrowserBridge, oauthTarget } from "./browser";
+import {
+  browserCredential,
+  type BrowserBridge,
+  oauthTarget,
+  restoredCredential,
+} from "./browser";
 import { createOAuthSession } from "./session";
 import { deferred } from "../test-helpers";
 beforeEach(() =>
@@ -473,3 +478,67 @@ it.each([
     expect(bridge.cancel).toHaveBeenCalled();
   },
 );
+
+describe("restoredCredential", () => {
+  const saved = (value: string | null) => ({
+    load: vi.fn(async () => value),
+    save: vi.fn(async () => {}),
+    clear: vi.fn(async () => {}),
+  });
+  const answering = (status: number, body = "") => ({
+    request: vi.fn(async () => ({ status, headers: {}, body })),
+  });
+  const target = "https://app.builderlab.xyz";
+  it("verifies the saved credential's account", async () => {
+    vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", target);
+    const store = saved("saved-token");
+    const host = answering(
+      200,
+      JSON.stringify({ subject: "user", email: " a@example.com " }),
+    );
+    const restored = await restoredCredential(
+      host,
+      new AbortController().signal,
+      store,
+    );
+    expect(restored).toEqual({
+      value: "saved-token",
+      account: {
+        subject: "user",
+        email: "a@example.com",
+        canUseRemoteAgents: false,
+        canUseBuilderlabDecisions: false,
+      },
+    });
+    expect(host.request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: `${target}/api/goose/v1/auth/me`,
+        headers: expect.objectContaining({
+          "X-BB-Session-Credential": "saved-token",
+        }),
+      }),
+    );
+    expect(store.clear).not.toHaveBeenCalled();
+  });
+  it("deletes a credential Builderlab rejects", async () => {
+    vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", target);
+    const store = saved("revoked");
+    await expect(
+      restoredCredential(answering(401), new AbortController().signal, store),
+    ).resolves.toBeUndefined();
+    expect(store.clear).toHaveBeenCalledTimes(1);
+  });
+  it("keeps it when Builderlab cannot answer, and reads nothing when none is saved", async () => {
+    vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", target);
+    const store = saved("saved-token");
+    await expect(
+      restoredCredential(answering(503), new AbortController().signal, store),
+    ).rejects.toThrow("Could not restore");
+    expect(store.clear).not.toHaveBeenCalled();
+    const host = answering(200);
+    await expect(
+      restoredCredential(host, new AbortController().signal, saved(null)),
+    ).resolves.toBeUndefined();
+    expect(host.request).not.toHaveBeenCalled();
+  });
+});

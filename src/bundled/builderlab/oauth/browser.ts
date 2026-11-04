@@ -161,17 +161,7 @@ export async function browserCredential(
     signal.throwIfAborted();
     // Focus return is best effort and must not delay verified login.
     completion = bridge.complete(id).catch(() => {});
-    return Object.freeze({
-      value: session_credential,
-      account: Object.freeze({
-        subject: account.subject,
-        email: typeof account.email === "string" ? account.email.trim() : "",
-        canUseRemoteAgents:
-          account.capabilities?.can_use_remote_agents === true,
-        canUseBuilderlabDecisions:
-          account.capabilities?.can_use_builderlab_decisions === true,
-      }),
-    });
+    return credentialFor(session_credential, account);
   } catch (error) {
     if (signal.aborted) throw new Error("Sign-in canceled.");
     // Native errors are strings. Never forward provider bodies or credentials.
@@ -184,4 +174,76 @@ export async function browserCredential(
     if (completion) void completion.then(cancel);
     else if (id) await bridge.cancel(id);
   }
+}
+
+// biome-ignore lint/suspicious/noExplicitAny: Builderlab's `v1/auth/me` JSON.
+function credentialFor(value: string, account: any): Credential {
+  return Object.freeze({
+    value,
+    account: Object.freeze({
+      subject: account.subject,
+      email: typeof account.email === "string" ? account.email.trim() : "",
+      canUseRemoteAgents: account.capabilities?.can_use_remote_agents === true,
+      canUseBuilderlabDecisions:
+        account.capabilities?.can_use_builderlab_decisions === true,
+    }),
+  });
+}
+
+/** The OS secure item that keeps the browser sign-in across restarts. */
+export type SavedCredential = {
+  load(): Promise<string | null>;
+  save(value: string): Promise<void>;
+  clear(): Promise<void>;
+};
+const saves = new Set<() => void>();
+export const savedCredential: SavedCredential = {
+  load: () => invoke("builderlab_session_load", { target: oauthTarget() }),
+  save: async (value) => {
+    await invoke("builderlab_session_save", { target: oauthTarget(), value });
+    for (const listener of [...saves]) listener();
+  },
+  clear: () => invoke("builderlab_session_clear", { target: oauthTarget() }),
+};
+/** Calls `listener` after each save in this app, such as first run's
+ * sign-in, so a running session can restore it. */
+export function onCredentialSaved(listener: () => void) {
+  saves.add(listener);
+  return () => {
+    saves.delete(listener);
+  };
+}
+
+/**
+ * The saved credential with its account from `GET v1/auth/me`, or undefined
+ * when none is saved or Builderlab rejects it (HTTP 401 or 403), which
+ * deletes it. Rejects, keeping it, when Builderlab cannot answer.
+ */
+export async function restoredCredential(
+  host: Pick<Host, "request">,
+  signal: AbortSignal,
+  saved: SavedCredential = savedCredential,
+): Promise<Credential | undefined> {
+  const value = await saved.load();
+  signal.throwIfAborted();
+  if (!value) return undefined;
+  const response = await host.request({
+    url: `${oauthTarget()}/v1/auth/me`,
+    method: "GET",
+    headers: { Accept: "application/json", "X-BB-Session-Credential": value },
+  });
+  signal.throwIfAborted();
+  if (response.status === 401 || response.status === 403) {
+    await saved.clear();
+    return undefined;
+  }
+  if (response.status < 200 || response.status >= 300)
+    throw new Error("Could not restore your Builderlab sign-in. Try again.");
+  let account: { subject?: unknown } | undefined;
+  try {
+    account = JSON.parse(response.body);
+  } catch {}
+  if (typeof account?.subject !== "string" || !account.subject.trim())
+    throw new Error("Could not restore your Builderlab sign-in. Try again.");
+  return credentialFor(value, account);
 }

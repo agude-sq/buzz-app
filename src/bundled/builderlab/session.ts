@@ -17,6 +17,9 @@ export type LoginSnapshot = Readonly<{
   /** Pending with no browser step, such as restoring a saved sign-in or
    * reading its account; it cannot be cancelled. */
   checking?: boolean;
+  /** Signed in through the native NIP-FI session, whose sign-out is managed
+   * in Identity; in an FI build that is every sign-in. */
+  federated?: boolean;
 }>;
 /** A call under the Builderlab API root; `path` starts with `/`. */
 export type BuilderlabRequest = Readonly<{
@@ -69,6 +72,169 @@ export async function accountStorage(subject: string) {
 /** Whether this build signs in to Builderlab with the native NIP-FI session. */
 export const nativeBuilderlab = () =>
   import.meta.env.VITE_BUZZ_FEDERATED_IDENTITY === "1";
+/** Whether this build's Builderlab is the built-in sign-in server, whose
+ * sign-in is NIP-FI where it offers it and the browser's otherwise. */
+export const autoBuilderlab = () =>
+  import.meta.env.VITE_BUZZ_FEDERATED_IDENTITY === "auto";
+
+/**
+ * Which sign-in a server offers, from an uncredentialed `GET v1/session` at
+ * its adapter: 404 has no NIP-FI sign-in, so `"browser"`; any other answer
+ * is `"federated"`. Rejects on a network error or 5xx, which never falls
+ * back to the browser.
+ */
+export async function offeredSignIn(
+  probe: () => Promise<HostResponse>,
+): Promise<"browser" | "federated"> {
+  let status: number;
+  try {
+    status = (await probe()).status;
+  } catch {
+    status = 0;
+  }
+  if (status === 404) return "browser";
+  if (status < 100 || status >= 500)
+    throw new Error("Could not reach Builderlab. Try again.");
+  return "federated";
+}
+
+/**
+ * The built-in server's Builderlab session: its native NIP-FI session
+ * whenever one exists or is starting, such as after a community that
+ * requires NIP-FI asked for sign-in, and otherwise the browser sign-in. A
+ * sign-in asks `offered` which one the server has, and Cancel ends that
+ * question too. Once a NIP-FI session is signed in, the browser sign-in is
+ * signed out, revoked and deleted, so it never comes back.
+ */
+export function createAutoSession(
+  native: BuilderlabSession,
+  browser: BuilderlabSession,
+  offered: () => Promise<"browser" | "federated">,
+  identity: Pick<FederatedIdentity, "snapshot" | "subscribe">,
+): BuilderlabSession {
+  let chosen: BuilderlabSession | undefined;
+  let error: string | undefined;
+  let probe: { promise?: Promise<BuilderlabSession | undefined> } | undefined;
+  let state: LoginSnapshot = { status: "signed-out" };
+  const listeners = new Set<() => void>();
+  const owned = () =>
+    [
+      "signed-in",
+      "signing-in",
+      "restoring",
+      "reauthentication-required",
+    ].includes(identity.snapshot().status);
+  const active = () => (owned() || chosen === native ? native : browser);
+  const project = () => {
+    if (
+      identity.snapshot().status === "signed-in" &&
+      browser.snapshot().status !== "signed-out"
+    )
+      browser.signOut();
+    const current = active();
+    const inner = current.snapshot();
+    const next: LoginSnapshot = probe
+      ? { status: "pending" }
+      : error && inner.status === "signed-out"
+        ? { status: "signed-out", error }
+        : current === native
+          ? { ...inner, federated: true }
+          : inner;
+    if (
+      next.status !== state.status ||
+      next.account !== state.account ||
+      next.error !== state.error ||
+      next.checking !== state.checking ||
+      next.federated !== state.federated
+    ) {
+      state = Object.freeze(next);
+      for (const listener of [...listeners]) listener();
+    }
+  };
+  const stops = [
+    native.subscribe(project),
+    browser.subscribe(project),
+    identity.subscribe(project),
+  ];
+  project();
+  /** The sign-in the server offers; joined callers share one question, and
+   * a canceled one answers undefined. */
+  const choose = () => {
+    if (probe?.promise) return probe.promise;
+    const current: NonNullable<typeof probe> = {};
+    probe = current;
+    error = undefined;
+    project();
+    current.promise = offered()
+      .then(
+        (offer) => {
+          if (probe !== current) return undefined;
+          chosen = offer === "browser" ? browser : native;
+          return chosen;
+        },
+        (failure) => {
+          if (probe !== current) return undefined;
+          error =
+            failure instanceof Error
+              ? failure.message
+              : "Sign-in failed. Try again.";
+          throw failure;
+        },
+      )
+      .finally(() => {
+        if (probe !== current) return;
+        probe = undefined;
+        project();
+      });
+    return current.promise;
+  };
+  const stop = () => {
+    if (!probe) return false;
+    probe = undefined;
+    project();
+    return true;
+  };
+  const signedIn = () => state.status === "signed-in";
+  return {
+    snapshot: () => state,
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    credential: () => active().credential(),
+    request: (credential, input) => active().request(credential, input),
+    expired: (credential) => active().expired(credential),
+    viewerSession: () => active().viewerSession(),
+    async ensureSignedIn(signal) {
+      signal.throwIfAborted();
+      if (signedIn()) return;
+      if ((state.status === "pending" && !probe) || owned())
+        return active().ensureSignedIn(signal);
+      const session = await choose();
+      signal.throwIfAborted();
+      if (!session) throw new Error("Sign-in canceled.");
+      return session.ensureSignedIn(signal);
+    },
+    async signIn() {
+      if (signedIn() || probe) return;
+      if (owned()) return native.signIn();
+      const session = await choose().catch(() => undefined);
+      await session?.signIn();
+    },
+    cancel: () => void (stop() || active().cancel()),
+    abandon: () => void (stop() || active().abandon()),
+    signOut: () => void (stop() || active().signOut()),
+    dispose() {
+      probe = undefined;
+      for (const stop of stops) stop();
+      listeners.clear();
+      native.dispose();
+      browser.dispose();
+    },
+  };
+}
 
 /**
  * The current NIP-FI session's account from Builderlab's `GET v1/auth/me`,

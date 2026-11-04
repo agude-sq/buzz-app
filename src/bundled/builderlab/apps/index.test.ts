@@ -125,6 +125,26 @@ it("adds the app tools only for a tenant with an Apps control plane", async () =
   );
 });
 
+it("turns the tools off while the NIP-FI session is in use, never calling as the browser sign-in", async () => {
+  const { ctx, respond, session: browser } = await setup();
+  const tools = new Map<string, AddedTool>();
+  ctx.agents.addTool = (tool: AddedTool) => tools.set(tool.name, tool);
+  const federated = {
+    ...browser,
+    snapshot: () => ({ ...browser.snapshot(), federated: true }),
+  };
+  applyApps(ctx as never, federated, true, browser);
+  for (const name of ["apps_list", "apps_create"])
+    await expect(
+      (tools.get(name) as AddedTool).call(
+        {} as BuzzClient,
+        {},
+        { name: "demo" },
+      ),
+    ).rejects.toThrow("not available with your organization sign-in");
+  expect(respond).not.toHaveBeenCalled();
+});
+
 it("returns once the deployed version serves", async () => {
   vi.useFakeTimers();
   const { call, responses, respond } = await setup();

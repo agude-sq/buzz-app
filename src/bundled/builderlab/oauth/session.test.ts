@@ -160,3 +160,112 @@ it("ensureSignedIn starts and joins a fresh Settings login from signed-out", asy
   expect(session.viewerSession().signal.aborted).toBe(false);
   session.dispose();
 });
+
+it("restores a saved sign-in, saves a new one and deletes it on sign-out", async () => {
+  const restored = { ...credential, value: "saved-token" };
+  const persistence = {
+    restore: vi.fn(async () => restored),
+    save: vi.fn(async () => {}),
+    clear: vi.fn(async () => {}),
+  };
+  const release = vi.fn();
+  const session = createOAuthSession(
+    async () => credential,
+    release,
+    undefined,
+    persistence,
+  );
+  expect(session.snapshot()).toEqual({ status: "pending", checking: true });
+  await vi.waitFor(() => expect(session.snapshot().status).toBe("signed-in"));
+  expect(session.credential()).toBe(restored);
+  expect(persistence.save).not.toHaveBeenCalled();
+  await session.signOut();
+  expect(release).toHaveBeenCalledWith(restored);
+  expect(persistence.clear).toHaveBeenCalledTimes(1);
+  await session.signIn();
+  expect(persistence.save).toHaveBeenCalledWith(credential);
+});
+
+it("shows a failed save as a retryable error and a failed delete as an unfinished sign-out", async () => {
+  const persistence = {
+    restore: async () => undefined,
+    save: vi.fn().mockRejectedValueOnce(new Error("denied")),
+    clear: vi.fn().mockRejectedValueOnce(new Error("denied")),
+  };
+  const release = vi.fn();
+  const session = createOAuthSession(
+    async () => credential,
+    release,
+    undefined,
+    persistence,
+  );
+  await vi.waitFor(() => expect(session.snapshot().status).toBe("signed-out"));
+  await session.signIn();
+  expect(session.snapshot()).toEqual({
+    status: "signed-out",
+    error: "Could not save your Builderlab sign-in. Try again.",
+  });
+  expect(release).toHaveBeenCalledWith(credential);
+  await session.signIn();
+  expect(session.snapshot().status).toBe("signed-in");
+  await session.signOut();
+  expect(session.snapshot()).toEqual({
+    status: "signed-in",
+    account: credential.account,
+    error: "Couldn’t finish signing out of Builderlab. Try again.",
+  });
+  expect(session.credential()).toBe(credential);
+  expect(release).toHaveBeenCalledTimes(1);
+  await session.signOut();
+  expect(session.snapshot()).toEqual({ status: "signed-out" });
+  expect(release).toHaveBeenCalledTimes(2);
+  expect(persistence.clear).toHaveBeenCalledTimes(2);
+});
+
+it("deletes after a save still running at sign-out, so the save cannot bring it back", async () => {
+  const saving = deferred<void>();
+  const order: string[] = [];
+  const persistence = {
+    restore: async () => undefined,
+    save: vi.fn(async () => {
+      await saving.promise;
+      order.push("save");
+    }),
+    clear: vi.fn(async () => {
+      order.push("clear");
+    }),
+  };
+  const release = vi.fn();
+  const session = createOAuthSession(
+    async () => credential,
+    release,
+    undefined,
+    persistence,
+  );
+  await vi.waitFor(() => expect(session.snapshot().status).toBe("signed-out"));
+  const signingIn = session.signIn();
+  await vi.waitFor(() => expect(persistence.save).toHaveBeenCalled());
+  const signingOut = session.signOut();
+  saving.resolve();
+  await Promise.all([signingIn, signingOut]);
+  expect(order).toEqual(["save", "clear"]);
+  expect(session.snapshot()).toEqual({ status: "signed-out" });
+  // The discarded sign-in is revoked, not left running.
+  expect(release).toHaveBeenCalledWith(credential);
+});
+
+it("starts signed out, without an error, when nothing saved is accepted", async () => {
+  const session = createOAuthSession(
+    async () => credential,
+    undefined,
+    undefined,
+    {
+      restore: async () => undefined,
+      save: async () => {},
+      clear: async () => {},
+    },
+  );
+  await vi.waitFor(() =>
+    expect(session.snapshot()).toEqual({ status: "signed-out" }),
+  );
+});

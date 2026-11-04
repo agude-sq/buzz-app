@@ -167,6 +167,7 @@ export function AccountRecoverySheet({
   mismatch: boolean;
   openIdentity?: (() => void) | undefined;
 }) {
+  const federated = nativeBuilderlab() || !!session.snapshot().federated;
   return (
     <SettingsErrorSheet
       active={active}
@@ -182,15 +183,15 @@ export function AccountRecoverySheet({
           : "This account can’t access Builderlab agents."
       }
       action={{
-        label: nativeBuilderlab()
+        label: federated
           ? "Identity → Organization sign-in"
           : "Use another account",
-        disabled: nativeBuilderlab() && !openIdentity,
+        disabled: federated && !openIdentity,
         href:
-          active && !nativeBuilderlab()
+          active && !federated
             ? new URL("/logout", oauthTarget()).href
             : undefined,
-        run: () => (nativeBuilderlab() ? openIdentity?.() : session.signOut()),
+        run: () => (federated ? openIdentity?.() : session.signOut()),
       }}
     />
   );

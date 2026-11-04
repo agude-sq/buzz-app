@@ -531,6 +531,9 @@ membership, the channel joins the sidebar and the composer becomes available and
 focused. Guest-default previews omit Join and preserve reading without membership.
 Joining a channel is not available for DMs, private, archived or session
 conversations. See [relay queries](relay-queries.md#public-channel-name-search-and-join).
+Channel results end with their member count when the roster is known, such as
+**Public channel · not joined · 12 members**. A failed read leaves the row
+without one. See [relay queries](relay-queries.md#public-channel-name-search-and-join).
 Unarchive publishes the existing narrow `9002` command with `archived=false` and
 requires fresh relay metadata with a missing/false archive tag before updating
 shared discovery; a missing record is not success. Restoration returns the sidebar
@@ -559,6 +562,12 @@ the returned command, and confirms relay-owned state before removing a row. Arch
 confirmed Delete/Leave use the existing access-loss purge. Commands use narrow
 development-broker routes or the packaged native `relay_channel_sign` and
 `relay_channel_publish` commands, never the message outbox or automatic replay.
+A published lifecycle command keeps its bounded, fresh, strong confirmation
+when access loss retires access-dependent work. Retired confirmation reads
+are reread; caller cancellation, session clear/disposal and the original deadline
+still abort its signal. A rejected publication or definitive confirmation-read
+failure still fails the command; an aborted read alone never confirms it. These signals
+do not forcibly interrupt an in-flight native publication IPC.
 Both hosts admit only the exact two-tag `9002` shape with `archived=true` (Archive)
 or `archived=false` (Unarchive); other values, extra tags, cross-route commands and
 altered or foreign signatures are rejected. Hosts without this capability display

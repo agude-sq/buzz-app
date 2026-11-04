@@ -400,6 +400,7 @@ function setup(
     addedTabs: () => [],
     registerTab: () => {},
     controlAttention: () => {},
+    harness: {} as Agents["harness"],
   } satisfies Agents;
   const disconnected = { status: "disconnected", generation: 0 };
   const relay = {
@@ -2889,7 +2890,7 @@ it("keeps a synced team in its home while none of its members is listed", async 
     ],
   });
   await user.click(screen.getByRole("tab", { name: "Your teams" }));
-  expect(agents.teamHere).toHaveBeenCalledWith({ id: "gone" });
+  expect(agents.teamHere).toHaveBeenCalledWith({ id: "gone" }, undefined);
   await user.click(screen.getByRole("button", { name: "Gone" }));
   await user.click(screen.getByRole("button", { name: "Delete team" }));
   expect(agents.removeTeam).toHaveBeenCalledWith("gone");
@@ -3794,6 +3795,75 @@ it("offers Make my bestie from the card's actions button", async () => {
     await screen.findByRole("gridcell", { name: "Ada, Bestie" }),
   ).toBeVisible();
   expect(screen.getByRole("gridcell", { name: "Bea" })).toBeVisible();
+});
+
+it("offers Make my bestie for a remote agent, asking first, and Cancel saves nothing", async () => {
+  const user = userEvent.setup();
+  const ada = agent("Ada", 1);
+  const sky: Agent = { ...agent("Sky", 2), place: "hosted" };
+  const view = setup([ada, sky]);
+  const rows = [ada, sky].map((each) => ({
+    pubkey: each.pubkey,
+    name: each.name,
+    managed: true,
+  }));
+  const choices = {
+    status: "ready",
+    complete: true,
+    pending: false,
+    identities: rows,
+    selectable: rows,
+    archives: { status: "unavailable", archived: [] },
+  };
+  // Saved none: there is no Bestie to replace.
+  const mainAgent = {
+    read: async () => null,
+    write: vi.fn(async (_agent: string | null) => {}),
+  };
+  const connection = {
+    status: "ready",
+    scope: "remote-bestie",
+    session: {
+      mainAgent,
+      agentChoices: {
+        snapshot: () => choices,
+        subscribe: () => () => {},
+        retain: () => () => {},
+      },
+    },
+  };
+  const relay = {
+    snapshot: () => connection,
+    subscribe: () => () => {},
+  } as unknown as RelayData;
+  view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
+  const card = await screen.findByRole("gridcell", { name: /^Sky/ });
+  const make = async () => {
+    await user.click(
+      within(card).getByRole("button", { name: "Actions for Sky" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Make my bestie" }),
+    );
+    return screen.findByRole("alertdialog", {
+      name: "Use Sky as your bestie?",
+    });
+  };
+  const ask = await make();
+  expect(ask).toHaveTextContent(
+    "Some bestie features aren’t available with remote agents.",
+  );
+  await user.click(within(ask).getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  expect(mainAgent.write).not.toHaveBeenCalled();
+
+  await user.click(
+    within(await make()).getByRole("button", { name: "Use as bestie" }),
+  );
+  expect(mainAgent.write).toHaveBeenCalledWith(sky.pubkey);
+  await vi.waitFor(() =>
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
+  );
 });
 
 it("keeps a failed Bestie replacement visible and retries the account save", async () => {

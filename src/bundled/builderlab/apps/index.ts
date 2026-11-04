@@ -97,7 +97,15 @@ export function applyApps(
   });
   const base = controlPlane();
   if (!base || (!legacy && !dev)) return;
-  const apps = () => createAppsClient(ctx.host, legacy ?? session, base, dev);
+  // Off while the NIP-FI session is in use, as in an FI build: the tools
+  // never call as a browser sign-in hidden behind it.
+  const apps = () => {
+    if (session.snapshot().federated)
+      throw new Error(
+        "Builderlab Apps tools are not available with your organization sign-in.",
+      );
+    return createAppsClient(ctx.host, legacy ?? session, base, dev);
+  };
   const reply = (value: unknown) => JSON.stringify(value, null, 2);
   ctx.agents.addTool({
     name: "apps_contract",

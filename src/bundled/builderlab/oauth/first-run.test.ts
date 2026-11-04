@@ -428,3 +428,89 @@ describe("an FI build", () => {
     expect(fi.request).not.toHaveBeenCalled();
   });
 });
+
+it("saves first run's browser sign-in as the plugin's session, now and after a restart", async () => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://app.builderlab.xyz");
+  // Native keys the item by the build's Builderlab, which each call names.
+  const items = new Map<unknown, string>();
+  const me = JSON.stringify({ subject: "user", email: "a@example.com" });
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    const input = args as Record<string, unknown> | undefined;
+    switch (command) {
+      case "plugin_catalog":
+        return catalog(true);
+      case "oauth_callback_begin":
+        return { id: "a", callbackUrl: "http://127.0.0.1:1/cb" };
+      case "oauth_callback_wait":
+        return { parameters: [["code", "code"]] };
+      case "builderlab_session_save":
+        items.set(input?.target, input?.value as string);
+        return undefined;
+      case "builderlab_session_load":
+        return items.get(input?.target) ?? null;
+      case "plugin_host_request": {
+        const { url } = (input as { request: { url: string } }).request;
+        return url.endsWith("/exchange")
+          ? { status: 200, headers: {}, body: '{"session_credential":"token"}' }
+          : { status: 200, headers: {}, body: me };
+      }
+      default:
+        return undefined;
+    }
+  });
+  const { createOAuthSession } = await import("./session");
+  const { onCredentialSaved, restoredCredential, savedCredential } =
+    await import("./browser");
+  const plugin = () => {
+    const acquire = vi.fn(async () => {
+      throw new Error("asked again");
+    });
+    const session = createOAuthSession(acquire, undefined, bundledHost, {
+      restore: (signal) => restoredCredential(bundledHost, signal),
+      save: (credential) => savedCredential.save(credential.value),
+      clear: () => savedCredential.clear(),
+      watch: onCredentialSaved,
+    });
+    return { session, acquire };
+  };
+  // The plugin is already running, signed out, while first run signs in.
+  const running = plugin();
+  await vi.waitFor(() =>
+    expect(running.session.snapshot().status).toBe("signed-out"),
+  );
+  const credential = await firstRunCredential(new AbortController().signal);
+  expect(credential.value).toBe("token");
+  expect([...items]).toEqual([
+    ["https://app.builderlab.xyz/api/goose", "token"],
+  ]);
+  await vi.waitFor(() =>
+    expect(running.session.snapshot().status).toBe("signed-in"),
+  );
+  running.session.dispose();
+  // A restart: a new plugin session restores it without asking.
+  const restarted = plugin();
+  await vi.waitFor(() =>
+    expect(restarted.session.snapshot()).toMatchObject({
+      status: "signed-in",
+      account: { subject: "user" },
+    }),
+  );
+  expect(restarted.session.credential().value).toBe("token");
+  expect(running.acquire).not.toHaveBeenCalled();
+  expect(restarted.acquire).not.toHaveBeenCalled();
+  restarted.session.dispose();
+  // A build for another Builderlab never reads or sends this one.
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+  const other = plugin();
+  await vi.waitFor(() =>
+    expect(other.session.snapshot()).toEqual({ status: "signed-out" }),
+  );
+  const urls = vi
+    .mocked(invoke)
+    .mock.calls.filter(([command]) => command === "plugin_host_request")
+    .map(([, input]) => (input as { request: { url: string } }).request.url);
+  expect(urls.some((url) => url.startsWith("https://builderlab.example"))).toBe(
+    false,
+  );
+  other.session.dispose();
+});

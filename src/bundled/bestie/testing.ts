@@ -102,6 +102,7 @@ export async function bestieFixture(
         return { parameters: [["code", "one-time"]] };
       }
       if (command === "oauth_callback_cancel") return;
+      if (command.startsWith("builderlab_session_")) return null;
       if (command === "identity_restore") return identity.pubkey;
       if (command === "identity_prepare_remote_agent_authorization")
         return ["auth", identity.pubkey, "", "ef".repeat(64)];

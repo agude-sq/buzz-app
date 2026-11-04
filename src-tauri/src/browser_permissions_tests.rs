@@ -73,6 +73,7 @@ fn native_command_permissions_isolate_webviews() {
 
     let application_commands = [
         "federated_identity_snapshot",
+        "federated_identity_servers",
         "federated_identity_sign_in",
         "federated_identity_cancel_sign_in",
         "federated_identity_sign_out",
@@ -193,6 +194,9 @@ fn native_command_permissions_isolate_webviews() {
         "jev_classifier_status",
         "jev_classifier_set_key",
         "jev_classifier_clear_key",
+        "builderlab_session_load",
+        "builderlab_session_save",
+        "builderlab_session_clear",
         "app_agent_state_load",
         "app_agent_state_set",
         "decide",

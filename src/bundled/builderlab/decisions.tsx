@@ -40,8 +40,11 @@ export function offerBuilderlabDecisions(
   let withdraw: (() => void) | undefined;
   const update = () => {
     const state = session.snapshot();
+    // Native sends only the browser sign-in's credential; a NIP-FI session
+    // offers no decisions, as in a build that adds a server.
     const allowed =
       state.status === "signed-in" &&
+      !state.federated &&
       state.account?.canUseBuilderlabDecisions === true;
     if (allowed && !withdraw)
       withdraw = ctx.decisions.registerProvider(provider);
@@ -63,7 +66,7 @@ export function builderlabProvider(
   native: BuilderlabDecide | undefined = nativeBuilderlabDecide(),
 ): DecisionProvider {
   const signedIn = () =>
-    session.snapshot().status === "signed-in"
+    session.snapshot().status === "signed-in" && !session.snapshot().federated
       ? session.credential()
       : undefined;
   // Builderlab reports at sign-in whether this account may use decisions.
