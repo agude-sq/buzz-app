@@ -2561,6 +2561,7 @@ it("groups a team's refusals with one reason into one alert whose Retry adds the
   expect(refusals()).toHaveLength(1);
   const retry = screen.getByRole("button", { name: "Retry adding Ada and Cy" });
   expect(retry).toHaveTextContent("Retry");
+  const attempts = t.publish.mock.calls.length;
   t.fail("");
   await t.user.click(retry);
   expect(screen.getByRole("searchbox")).toHaveFocus();
@@ -2568,9 +2569,12 @@ it("groups a team's refusals with one reason into one alert whose Retry adds the
   // One combined notice, instead of each retry announcing its own.
   await screen.findByText("Ada and Cy are in the channel.");
   const added = t.publish.mock.calls
-    .map(([event]) => event.tags.find((tag) => tag[0] === "p")?.[1])
+    .slice(attempts)
+    .flatMap(([event]) =>
+      event.tags.flatMap(([tag, value]) => (tag === "p" ? [value] : [])),
+    )
     .sort();
-  expect(added).toEqual([t.ada, t.ada, t.cy, t.cy].sort());
+  expect(added).toEqual([t.ada, t.cy].sort());
 });
 it("keeps only the still-refused member in the alert after a partial retry", async () => {
   const t = await teamSetup();
@@ -2617,7 +2621,13 @@ it("names three refused members and counts the rest", async () => {
 });
 it("shows a team's refusals with different reasons as separate alerts", async () => {
   const t = await teamSetup();
-  t.publish.mockRejectedValueOnce(new PublishRejected("Agent is archived"));
+  const base = t.publish.getMockImplementation();
+  if (!base) throw new Error("Missing publish fixture");
+  t.publish.mockImplementation(async (event) => {
+    if (event.tags.some(([tag, value]) => tag === "p" && value === t.ada))
+      throw new PublishRejected("Agent is archived");
+    return base(event);
+  });
   t.fail("Invitation denied");
   await t.user.click(screen.getByRole("button", { name: "Add team Crew" }));
   const refusals = () =>
