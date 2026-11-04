@@ -52,6 +52,20 @@ it("keeps every session's first save, each text once", async () => {
   expect(sessionPrompts(storage, "pi", AGENT).get("one")).toBeUndefined();
 });
 
+it("keeps when each session started and its title, alongside ones saved without", async () => {
+  const prompts = sessionPrompts(memory(), "goose", AGENT);
+  await prompts.save("old", [{ label: "", text: "a" }]);
+  await prompts.save("new", [{ label: "", text: "b" }], {
+    at: 5,
+    title: "Gander · #general",
+  });
+  expect(prompts.sessions()).toEqual([
+    { id: "old" },
+    { id: "new", at: 5, title: "Gander · #general" },
+  ]);
+  expect(prompts.get("new")).toEqual([{ label: "", text: "b" }]);
+});
+
 it("drops the oldest sessions to stay in budget, never cutting text", async () => {
   const prompts = sessionPrompts(memory(), "codex", AGENT);
   const big = (n: number) => `${n}`.repeat(PROMPTS_BUDGET / 3);

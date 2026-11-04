@@ -13,6 +13,7 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AgentDefaults } from "../agents/AgentDefaults";
+import { formatItemTimestamp } from "../../shared/datetime";
 import type {
   Agents,
   RegisteredAgentType,
@@ -697,7 +698,7 @@ function gooseHistory(ids: readonly string[] = ["s1"]) {
     home: "/home/test",
     history: ids.map((sessionId) => ({
       sessionId,
-      title: "Gander · #general · 11111111",
+      title: `Gander · #general · ${sessionId}`,
       cwd: "/home/test/.buzz",
       updatedAt: "2027-01-15T08:00:00Z",
       conversation: [
@@ -736,8 +737,9 @@ function gooseHistory(ids: readonly string[] = ["s1"]) {
 type World = {
   saved: ReturnType<GooseRuntime["conversations"]>;
   live?: ReturnType<GooseRuntime["sessions"]>;
-  /** Every session's id with a kept prompt, oldest first. */
-  ids?: string[];
+  /** Every session kept with its prompt, oldest first, and how it started
+   * when that was kept. */
+  ids?: (string | { id: string; at: number; title: string })[];
   names?: Record<string, string>;
   scope?: Config["scope"];
 };
@@ -765,7 +767,8 @@ function activity(
       world.names?.[id] ? { name: world.names[id], kind: "stream" } : undefined,
     prompts: () => ({
       shown: (turns: unknown) => turns,
-      ids: () => world.ids ?? [],
+      sessions: () =>
+        (world.ids ?? []).map((id) => (typeof id === "string" ? { id } : id)),
     }),
   } as unknown as GooseRuntime;
   const { ActivityTab } = createTabs({
@@ -804,6 +807,12 @@ const searches = (fake: ReturnType<typeof fakeSpawn>) =>
   fake.geese
     .flatMap((goose) => goose.received)
     .filter((message) => message.method === "session/list");
+/** goose's keyword searches, which read every session's messages. */
+const keyword = (fake: ReturnType<typeof fakeSpawn>) =>
+  searches(fake).filter(
+    (message) =>
+      (message.params as { _meta?: { query?: string } })._meta?.query,
+  );
 
 it("lists the agent's saved conversations and reads one's transcript by id, without searching goose", async () => {
   const fake = gooseHistory();
@@ -875,7 +884,7 @@ it("lists conversations by channel name, with running and standalone sessions, o
   const user = userEvent.setup();
   const items = () =>
     screen.getAllByRole("listitem").map((item) => item.textContent);
-  expect(items()).toHaveLength(6);
+  await waitFor(() => expect(items()).toHaveLength(6));
   expect(screen.getByText("general · channel")).toBeInTheDocument();
   expect(screen.getByText("running · channel")).toBeInTheDocument();
   // A conversation saved before session ids were: it gets its first one.
@@ -884,13 +893,17 @@ it("lists conversations by channel name, with running and standalone sessions, o
   });
   // Its id leaves the standalone sessions; no row is duplicated.
   expect(items()).toHaveLength(5);
-  expect(screen.queryByText("Session s1")).toBeNull();
-  // A watch's or timer's session, kept with its starting prompt only.
+  expect(screen.queryByText("#general · s1")).toBeNull();
+  // A watch's or timer's session kept before its start was: titled from one
+  // listing of goose's sessions, with no search.
   await user.click(
-    screen.getByRole("button", { name: "View transcript: Session timer" }),
+    await screen.findByRole("button", {
+      name: "View transcript: #general · timer",
+    }),
   );
   expect(await screen.findByText("Hi from timer")).toBeInTheDocument();
-  expect(searches(fake)).toEqual([]);
+  expect(searches(fake)).toHaveLength(1);
+  expect(keyword(fake)).toEqual([]);
 });
 
 it("follows the open conversation's newest session on Refresh", async () => {
@@ -966,11 +979,62 @@ it("keeps a standalone run listed past a full page of saved conversations", () =
       at,
       sessions: [`c${at}`],
     })),
-    ids: ["timer1"],
+    ids: [{ id: "timer1", at: 0, title: "Gander · timer/nightly" }],
   });
   expect(
-    screen.getByRole("button", { name: "View transcript: Session timer1" }),
+    screen.getByRole("button", { name: "View transcript: timer/nightly" }),
   ).toBeInTheDocument();
+});
+
+it("shows each session's channel and time without asking goose, and drops one goose no longer has", async () => {
+  const fake = gooseHistory(["old"]);
+  const at = Date.parse("2027-01-15T08:00:00Z");
+  activity(fake, {
+    saved: [],
+    ids: ["gone", "old", { id: "new", at, title: "Gander · #general" }],
+  });
+  const items = () =>
+    screen.getAllByRole("listitem").map((item) => item.textContent);
+  await waitFor(() =>
+    expect(items()).toEqual([
+      `#general${formatItemTimestamp(at / 1000, { withTime: true })}View transcript`,
+      `#general · old${formatItemTimestamp(at / 1000, { withTime: true })}View transcript`,
+    ]),
+  );
+  expect(keyword(fake)).toEqual([]);
+});
+
+it("lists the opened conversation's channel first, then every session newest first", () => {
+  activity(
+    gooseHistory(),
+    {
+      saved: [
+        { key: "a", at: 4, sessions: ["a1"] },
+        { key: "here/t1", at: 1, sessions: ["h1"] },
+        { key: "b", at: 2, sessions: ["b1"] },
+      ],
+      ids: [
+        { id: "x", at: 3, title: "Gander · timer/x" },
+        { id: "y", at: 5, title: "Gander · timer/y" },
+      ],
+      names: { a: "a", b: "b", here: "here" },
+    },
+    undefined,
+    { conversation: { channelId: "here", rootId: "t2" } },
+  );
+  expect(
+    screen
+      .getAllByRole("listitem")
+      .map((item) =>
+        within(item).getByRole("button").getAttribute("aria-label"),
+      ),
+  ).toEqual([
+    "View transcript: here · thread t1",
+    "View transcript: timer/y",
+    "View transcript: a · channel",
+    "View transcript: timer/x",
+    "View transcript: b · channel",
+  ]);
 });
 
 it("says when goose no longer has a conversation's saved sessions", async () => {

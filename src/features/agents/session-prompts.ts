@@ -20,14 +20,22 @@ export const PROMPTS_PREFIX = "buzz.session-prompts.v1:";
  * reads all of it at startup. */
 export const PROMPTS_BUDGET = 1_000_000;
 
-/** Sessions oldest first, each `[id, parts]`, a part `[label, text index]`.
- * Null parts mark a prompt that was too large to keep. Identical texts are
- * kept once. */
+/** When a session started and the title it was given. */
+export type SessionStart = Readonly<{ at: number; title: string }>;
+
+/** Sessions oldest first, each `[id, parts, start]`, a part `[label, text
+ * index]`. Null parts mark a prompt that was too large to keep. Identical
+ * texts are kept once. Sessions saved before starts were kept have none. */
 type Stored = {
   version: 1;
   texts: string[];
-  sessions: [string, [string, number][] | null][];
+  sessions: [string, [string, number][] | null, SessionStart?][];
 };
+type Session = readonly [
+  string,
+  readonly PromptPart[] | null,
+  (SessionStart | undefined)?,
+];
 
 const size = (text: string) => new TextEncoder().encode(text).length;
 
@@ -45,9 +53,7 @@ function read(text: string | null): Stored {
 }
 
 /** `sessions` with only the texts they use, each once. */
-function packed(
-  sessions: readonly (readonly [string, readonly PromptPart[] | null])[],
-): Stored {
+function packed(sessions: readonly Session[]): Stored {
   const texts: string[] = [];
   const index = new Map<string, number>();
   const at = (text: string) => {
@@ -61,10 +67,12 @@ function packed(
   return {
     version: 1,
     texts,
-    sessions: sessions.map(([id, parts]) => [
-      id,
-      parts ? parts.map(({ label, text }) => [label, at(text)]) : null,
-    ]),
+    sessions: sessions.map(([id, parts, start]) => {
+      const kept = parts
+        ? parts.map(({ label, text }): [string, number] => [label, at(text)])
+        : null;
+      return start ? [id, kept, start] : [id, kept];
+    }),
   };
 }
 
@@ -91,29 +99,34 @@ export function sessionPrompts(
   const all = () => {
     const { texts, sessions } = read(storage.get(key));
     return sessions.map(
-      ([id, parts]) =>
-        [
-          id,
-          parts
-            ? parts.flatMap(([label, text]) =>
-                typeof texts[text] === "string"
-                  ? [{ label, text: texts[text] }]
-                  : [],
-              )
-            : null,
-        ] as const,
+      ([id, parts, start]): Session => [
+        id,
+        parts
+          ? parts.flatMap(([label, text]) =>
+              typeof texts[text] === "string"
+                ? [{ label, text: texts[text] }]
+                : [],
+            )
+          : null,
+        start,
+      ],
     );
   };
   const get = (session: string) => all().find(([id]) => id === session)?.[1];
   return {
     get,
-    /** The ids of the sessions kept, oldest first. */
-    ids: () => all().map(([id]) => id),
+    /** The sessions kept, oldest first, with how each started when that was
+     * kept. */
+    sessions: () => all().map(([id, , start]) => ({ id, ...start })),
     /** Keeps what a new session was sent, unless one is kept for it already:
      * the first save wins. Only a runtime's new-session path calls this, so a
      * resumed or dropped session is never filled in. A failed save is
      * logged, never thrown, so the agent keeps working. */
-    async save(session: string, parts: readonly PromptPart[]) {
+    async save(
+      session: string,
+      parts: readonly PromptPart[],
+      start?: SessionStart,
+    ) {
       try {
         // Read, changed and written with no wait between, so saves of one
         // value never interleave and none drops another's session.
@@ -125,6 +138,7 @@ export function sessionPrompts(
           size(JSON.stringify(packed([[session, kept]]))) > PROMPTS_BUDGET
             ? null
             : kept,
+          start,
         ]);
         let value = JSON.stringify(packed(sessions));
         while (size(value) > PROMPTS_BUDGET && sessions.length > 1) {

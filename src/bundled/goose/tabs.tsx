@@ -54,6 +54,7 @@ import {
 import {
   type GooseHistory,
   type GooseTranscript,
+  type GooseSessionRow,
   type Place,
   RECENT_LIMIT,
   TURN_LIMIT,
@@ -884,15 +885,47 @@ export function createTabs({
           ...runtime.channelLabel(agent.key, place.channelId),
         };
       });
-    // Sessions of no conversation, such as a watch's or timer's turn: their
-    // ids are kept with what each session started with.
+    // Sessions of no conversation, such as a watch's or timer's turn: kept
+    // with what each session started with, and when, under its title. One
+    // started before that was kept takes both from one listing of goose's
+    // sessions, with no search; one goose no longer lists is left out.
     const known = new Set(conversations.flatMap((row) => row.sessions ?? []));
-    const standalone = runtime
+    const kept = runtime
       .prompts(agent.key)
-      .ids()
-      .filter((id) => !known.has(id))
+      .sessions()
+      .filter(({ id }) => !known.has(id))
       .reverse()
-      .map((id): Row => ({ key: id, sessionId: id, title: "", channelId: "" }));
+      .slice(0, RECENT_LIMIT);
+    const untitled = kept.some((session) => session.at === undefined);
+    const [listed, setListed] = useState<Map<string, GooseSessionRow>>();
+    const workspace = readConfig(agent.config).workspace;
+    // biome-ignore lint/correctness/useExhaustiveDependencies: listed once a profile, for the agent's workspace.
+    useEffect(() => {
+      if (!untitled || listed) return;
+      const abort = new AbortController();
+      history
+        .workspace(workspace, 0, () => false, abort.signal)
+        .then(
+          ({ rows }) =>
+            setListed(new Map(rows.map((row) => [row.sessionId, row]))),
+          () => {},
+        );
+      return () => abort.abort();
+    }, [untitled, workspace]);
+    const standalone = kept.flatMap(({ id, at, title = "" }): Row[] => {
+      const found = at === undefined ? listed?.get(id) : { at, title };
+      return found
+        ? [
+            {
+              key: id,
+              sessionId: id,
+              title: found.title,
+              at: found.at,
+              channelId: "",
+            },
+          ]
+        : [];
+    });
     // The opened conversation's session: a thread's saved or live one, else
     // its channel's, read again each render so a first save is picked up.
     // With neither, its transcript offers to search goose's history, in the
@@ -928,20 +961,24 @@ export function createTabs({
     const label = (row: Row) =>
       row.title
         ? titled(agent.name, row.title)
-        : row.channelId
-          ? `${row.name || row.channelId.slice(0, 8)} · ${row.root ? `thread ${row.root.slice(0, 8)}` : "channel"}`
-          : `Session ${row.sessionId.slice(0, 8)}`;
+        : `${row.name || row.channelId.slice(0, 8)} · ${row.root ? `thread ${row.root.slice(0, 8)}` : "channel"}`;
     const { open, show, back } = useOpenTranscript(
       conversation,
       label,
       initialTranscript && { initial: here, ...initialTranscript },
       close,
     );
-    // Each kept to its own limit, so saved conversations never crowd out a
-    // watch's or timer's newest runs.
-    const rows = [conversations, standalone].flatMap((group) =>
-      group.filter((row) => row.key !== here?.key).slice(0, RECENT_LIMIT),
-    );
+    // Each kind kept to its own limit, so neither crowds out the other, then
+    // the opened conversation's channel first and the rest newest first.
+    const channel = conversation?.channelId;
+    const rows = [conversations.slice(0, RECENT_LIMIT), standalone]
+      .flat()
+      .filter((row) => row.key !== here?.key)
+      .sort(
+        (a, b) =>
+          Number(b.channelId === channel) - Number(a.channelId === channel) ||
+          (b.at ?? 0) - (a.at ?? 0),
+      );
     // The open transcript follows its conversation's current sessions.
     const shown =
       open &&

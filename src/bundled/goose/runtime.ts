@@ -777,8 +777,11 @@ export class GooseRuntime {
       tools,
       process: this.goose,
       store: localSessions(this.storage, agent),
-      started: (session, text) =>
-        void this.prompts(agent).save(session, [{ label: "", text }]),
+      started: (session, text, title) =>
+        void this.prompts(agent).save(session, [{ label: "", text }], {
+          at: Date.now(),
+          title: title ?? "",
+        }),
       onChange: () => this.notify(),
       // Read as each turn starts, so a change needs no restart.
       choice: () => ({
