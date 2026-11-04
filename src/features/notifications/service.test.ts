@@ -186,6 +186,30 @@ it("preserves the submission sound decision when native delivery fails late", as
   expect(fallback).toHaveBeenCalledOnce();
   expect(t.plays).toEqual([]);
 });
+it("keeps current Sound off authoritative for a late fallback", async () => {
+  const t = setup();
+  const fallback = vi.fn();
+  let release!: () => void;
+  let visible = false;
+  vi.mocked(t.platform.show).mockImplementationOnce(
+    (_item, activate, failed) =>
+      new Promise<void>((resolve) => {
+        t.clicks.push(activate);
+        t.failures.push(failed);
+        release = resolve;
+      }),
+  );
+  await t.submit("late-failure-currently-muted", () => !visible, fallback);
+  await flush();
+  visible = true;
+  release();
+  await flush();
+  visible = false;
+  t.service.updatePreferences({ sound: false });
+  t.failures[0]?.(new Error("Late native failure"), "delivery");
+  expect(fallback).toHaveBeenCalledOnce();
+  expect(t.plays).toEqual([]);
+});
 it("reports activation failures without showing a delivery fallback", async () => {
   const t = setup();
   const fallback = vi.fn();

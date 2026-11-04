@@ -419,7 +419,7 @@ export class NotificationsService extends Service implements Notifications {
       return;
     item.fallbackShown = true;
     item.fallback(activate);
-    if (!item.soundPlayed && soundAllowed) {
+    if (!item.soundPlayed && soundAllowed && this.soundEnabled(item.category)) {
       item.soundPlayed = true;
       this.playSound(
         resolveCategorySound(this.state.preferences.sounds, item.category),
