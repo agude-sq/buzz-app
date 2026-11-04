@@ -166,6 +166,7 @@ fixed workstation. The runner requires native custody and idle turns, then
 retires the current harness before it saves the choice. Admission reads durable
 state so another window's remote choice cannot start local work. Protected
 agents cannot use plugin execution.
+Agent snapshots include `executionBinding` so mounted controls observe a saved choice.
 
 The harness saves a session key before it calls
 `agents.execution(agent.key, { key, intent, signal })`. The first successful open

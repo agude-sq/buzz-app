@@ -486,6 +486,11 @@ it("binds a dedicated native agent and preserves its target when a provider chan
     name: "Dedicated",
   });
   await service.retype(agent.key, "example/native");
+  const observed: Agent[] = [];
+  const off = service.subscribe(() => {
+    const current = service.find(agent.key);
+    if (current) observed.push(current);
+  });
   const binding = { id: "remote", config: { profile: "scratch" } };
   native.claim.mockResolvedValueOnce(false);
   await expect(
@@ -506,6 +511,11 @@ it("binds a dedicated native agent and preserves its target when a provider chan
     finishRetirement();
   }
   await changing;
+  off();
+  expect(observed.at(-1)?.executionBinding).toEqual({
+    provider: "internal/remote",
+    config: { profile: "scratch" },
+  });
   expect(service.executionBinding(agent.key)).toEqual({
     provider: "internal/remote",
     config: { profile: "scratch" },

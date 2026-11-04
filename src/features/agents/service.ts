@@ -228,6 +228,8 @@ export type Agent<Config = unknown> = Readonly<{
   deleting?: true;
   protection?: ProtectionBinding;
   protectionRevision?: number;
+  /** Saved execution selection for this membership on this device. */
+  executionBinding?: AgentExecutionBinding;
   attention: Readonly<Record<string, AttentionObject>>;
   /** Stored attention objects that are invalid or over a limit, by slug. */
   skipped: Readonly<Record<string, SkippedObject>>;
@@ -5096,6 +5098,7 @@ export class AgentsService extends Service implements Agents {
   }
   private view(identity: Member, record: AgentRecord): Agent {
     const editor = this.editorConfig(identity, record.config as object);
+    const executionBinding = this.executions.read(identity.key);
     return Object.freeze({
       key: identity.key,
       pubkey: identity.pubkey,
@@ -5107,6 +5110,7 @@ export class AgentsService extends Service implements Agents {
       place: "here",
       ...(identity.protection ? { protection: identity.protection } : {}),
       protectionRevision: identity.protectionRevision ?? 0,
+      ...(executionBinding ? { executionBinding } : {}),
       attention: record.attention,
       skipped: record.skipped ?? EMPTY,
       timers: record.timers ?? EMPTY,
@@ -5674,6 +5678,8 @@ export class AgentsService extends Service implements Agents {
           prior.picture === identity.picture &&
           prior.type === identity.type &&
           prior.protectionRevision === (identity.protectionRevision ?? 0) &&
+          JSON.stringify(prior.executionBinding) ===
+            JSON.stringify(this.executions.read(identity.key)) &&
           prior.attention === record.attention &&
           prior.skipped === (record.skipped ?? EMPTY) &&
           prior.timers === (record.timers ?? EMPTY) &&

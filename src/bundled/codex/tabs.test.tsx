@@ -1848,6 +1848,47 @@ it("opens scoped model settings from a remote card when local Codex is unavailab
   expect(f.spawn).not.toHaveBeenCalled();
 });
 
+it("refreshes a mounted card after its agent receives an execution binding", async () => {
+  const f = fixture({ installed: false });
+  let binding: AgentExecutionBinding | undefined;
+  const pending = deferred<AgentExecutionBinding | undefined>();
+  const tabs = createTabs(f.provider, f.runtime, f.spawn, f.setup, async () =>
+    binding ? pending.promise : undefined,
+  );
+  const agent = f.props().agent;
+  const openSettings = vi.fn();
+  const props = {
+    config: defaults,
+    disabled: false,
+    onChange: vi.fn(),
+    openSettings,
+  };
+  const view = render(<tabs.CreateModel {...props} agent={agent} />);
+  await screen.findByRole("button", { name: "Install Codex" });
+  f.spawn.mockClear();
+  binding = { provider: "test/guest" };
+  view.rerender(
+    <tabs.CreateModel
+      {...props}
+      agent={{ ...agent, executionBinding: binding }}
+    />,
+  );
+  try {
+    expect(screen.queryByText("Install Codex")).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
+      "Loading models",
+    );
+  } finally {
+    pending.resolve(binding);
+  }
+  const control = await screen.findByRole("button", { name: "Model settings" });
+  expect(control).toHaveTextContent("Codex default");
+  expect(screen.queryByText("Install Codex")).not.toBeInTheDocument();
+  await userEvent.setup().click(control);
+  expect(openSettings).toHaveBeenCalledOnce();
+  expect(f.spawn).not.toHaveBeenCalled();
+});
+
 it("keeps remote settings read-only without opening a model catalog", async () => {
   const f = fixture({ binding: { provider: "test/guest" } });
   render(<f.tabs.SettingsTab {...f.props()} />);

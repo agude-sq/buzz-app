@@ -428,14 +428,17 @@ export function createTabs(
 ) {
   const login = setup;
 
-  function useBinding(agent?: AgentKey) {
+  function useBinding(member?: AgentViewProps<Config>["agent"]) {
+    const agent = member?.key;
+    const executionBinding = member?.executionBinding;
     const [attempt, setAttempt] = useState(0);
     const [read, setRead] = useState<{
       agent?: AgentKey;
+      observed?: AgentExecutionBinding;
       binding?: AgentExecutionBinding;
       error?: string;
     }>();
-    // biome-ignore lint/correctness/useExhaustiveDependencies: attempt retries inspection.
+    // biome-ignore lint/correctness/useExhaustiveDependencies: binding changes and retry requests require a saved-state read.
     useEffect(() => {
       let current = true;
       if (!agent) {
@@ -444,17 +447,30 @@ export function createTabs(
       }
       void binding(agent).then(
         (binding) => {
-          if (current) setRead({ agent, ...(binding ? { binding } : {}) });
+          if (current)
+            setRead({
+              agent,
+              ...(executionBinding ? { observed: executionBinding } : {}),
+              ...(binding ? { binding } : {}),
+            });
         },
         (error) => {
-          if (current) setRead({ agent, error: message(error) });
+          if (current)
+            setRead({
+              agent,
+              ...(executionBinding ? { observed: executionBinding } : {}),
+              error: message(error),
+            });
         },
       );
       return () => {
         current = false;
       };
-    }, [agent, attempt]);
-    const held = read?.agent === agent ? read : undefined;
+    }, [agent, executionBinding, attempt]);
+    const held =
+      read?.agent === agent && read?.observed === executionBinding
+        ? read
+        : undefined;
     return {
       bound: held?.binding,
       checking: !!agent && !held,
@@ -466,7 +482,7 @@ export function createTabs(
     };
   }
   function useProvider(agent?: AgentViewProps<Config>["agent"]) {
-    const inspected = useBinding(agent?.key);
+    const inspected = useBinding(agent);
     const state = useSyncExternalStore(
       provider.subscribe,
       provider.snapshot,
