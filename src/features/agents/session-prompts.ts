@@ -39,15 +39,63 @@ type Session = readonly [
 
 const size = (text: string) => new TextEncoder().encode(text).length;
 
+/** The longest session id or label kept; longer ones are taken as damaged. */
+const ID_LIMIT = 256;
+const short = (value: unknown): value is string =>
+  typeof value === "string" && value.length <= ID_LIMIT;
+
+/** A saved session as stored, or undefined when it is damaged. One saved
+ * before starts were kept has none. */
+function storedSession(value: unknown): Stored["sessions"][number] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const [id, parts, start] = value as unknown[];
+  if (!short(id) || !id) return undefined;
+  if (
+    parts !== null &&
+    !(
+      Array.isArray(parts) &&
+      parts.every(
+        (part) =>
+          Array.isArray(part) &&
+          short(part[0]) &&
+          Number.isInteger(part[1]) &&
+          part[1] >= 0,
+      )
+    )
+  )
+    return undefined;
+  if (start === undefined) return [id, parts];
+  const { at, title } = (start ?? {}) as { at?: unknown; title?: unknown };
+  if (
+    typeof at !== "number" ||
+    !Number.isFinite(at) ||
+    typeof title !== "string"
+  )
+    return undefined;
+  return [id, parts, { at, title }];
+}
+
+/** The stored value, its damaged sessions dropped and the rest kept. */
 function read(text: string | null): Stored {
   try {
-    const stored = JSON.parse(text ?? "null") as Stored | null;
+    const stored = JSON.parse(text ?? "null") as Partial<Stored> | null;
     if (
       stored?.version === 1 &&
       Array.isArray(stored.texts) &&
       Array.isArray(stored.sessions)
-    )
-      return stored;
+    ) {
+      const seen = new Set<string>();
+      return {
+        version: 1,
+        texts: stored.texts,
+        sessions: stored.sessions.flatMap((value) => {
+          const session = storedSession(value);
+          if (!session || seen.has(session[0])) return [];
+          seen.add(session[0]);
+          return [session];
+        }),
+      };
+    }
   } catch {}
   return { version: 1, texts: [], sessions: [] };
 }
@@ -117,7 +165,28 @@ export function sessionPrompts(
     get,
     /** The sessions kept, oldest first, with how each started when that was
      * kept. */
-    sessions: () => all().map(([id, , start]) => ({ id, ...start })),
+    sessions: () =>
+      read(storage.get(key)).sessions.map(([id, , start]) => ({
+        id,
+        ...start,
+      })),
+    /** Keeps how sessions saved before starts were kept started, once found,
+     * so they are never looked up again. A session given none is gone. */
+    async remember(starts: ReadonlyMap<string, SessionStart>) {
+      try {
+        let changed = false;
+        const sessions = all().map((session): Session => {
+          const [id, parts, start] = session;
+          const found = starts.get(id);
+          if (start || !found) return session;
+          changed = true;
+          return [id, parts, found];
+        });
+        if (changed) await storage.set(key, JSON.stringify(packed(sessions)));
+      } catch (error) {
+        console.error("Sessions' starts were not saved", error);
+      }
+    },
     /** Keeps what a new session was sent, unless one is kept for it already:
      * the first save wins. Only a runtime's new-session path calls this, so a
      * resumed or dropped session is never filled in. A failed save is

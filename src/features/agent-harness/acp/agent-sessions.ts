@@ -35,6 +35,26 @@ export type SavedConversation = Readonly<{
   at: number;
   sessions?: readonly string[];
 }>;
+/** The longest session id kept; longer ones are taken as damaged. */
+const SESSION_ID_LIMIT = 256;
+
+/** A saved conversation as read back from storage, or undefined when it is
+ * damaged: a finite time, and its session ids de-duplicated, capped and kept
+ * only when each is a short string. One saved before ids were has none. */
+export function savedConversation(
+  value: unknown,
+): SavedConversation | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const { at, sessions } = value as { at?: unknown; sessions?: unknown };
+  if (typeof at !== "number" || !Number.isFinite(at)) return undefined;
+  if (sessions === undefined) return { at };
+  if (!Array.isArray(sessions)) return undefined;
+  const ids = sessions.filter(
+    (id): id is string =>
+      typeof id === "string" && id.length > 0 && id.length <= SESSION_ID_LIMIT,
+  );
+  return { at, sessions: [...new Set(ids)].slice(0, SAVED_SESSIONS) };
+}
 export type SessionStore = {
   get(key: string): SavedConversation | undefined;
   set(key: string, saved: SavedConversation): void;
@@ -644,7 +664,7 @@ export class AgentSessions {
     const { store } = this.options;
     if (store) {
       const { id } = live.session;
-      const sessions = store.get(key)?.sessions ?? [];
+      const sessions = savedConversation(store.get(key))?.sessions ?? [];
       store.set(key, {
         at: live.at,
         sessions: [id, ...sessions.filter((kept) => kept !== id)].slice(

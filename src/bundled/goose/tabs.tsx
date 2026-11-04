@@ -4,6 +4,7 @@ import { ModelDiscoveryRecovery } from "../../features/agents/ModelDiscoveryReco
 import {
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -130,6 +131,71 @@ const placeOf = (key: string): Place => {
   const [channelId = key, root] = key.split("/");
   return { channelId, ...(root ? { root } : {}) };
 };
+/** The start saved for a session goose no longer lists. */
+const GONE = { at: -1, title: "" };
+/** Each conversation's row, from its saved sessions and any still running,
+ * read by id with no search of goose, newest first; and the kept sessions of
+ * no conversation, such as a watch's or timer's turn, newest first. */
+export function activityRows(
+  saved: readonly { key: string; at: number; sessions: readonly string[] }[],
+  live: readonly { key: string; sessionId?: string; at?: number }[],
+  starts: readonly { id: string; at?: number; title?: string }[],
+  label: (channelId: string) => { name?: string } | undefined = () => undefined,
+) {
+  const running = new Map(
+    live.flatMap((session) =>
+      session.sessionId ? [[session.key, session] as const] : [],
+    ),
+  );
+  const byKey = new Map(
+    saved.map(({ key, at, sessions }) => [key, { at, sessions }]),
+  );
+  for (const [key, session] of running)
+    if (!byKey.has(key))
+      byKey.set(key, { at: session.at ?? Date.now(), sessions: [] });
+  const conversations = [...byKey]
+    .sort(([, a], [, b]) => b.at - a.at)
+    .map(([key, { at, sessions }]): Row => {
+      const id = running.get(key)?.sessionId;
+      const ids = [...new Set([...(id ? [id] : []), ...sessions])];
+      const place = placeOf(key);
+      return {
+        key,
+        sessionId: ids[0] ?? "",
+        title: "",
+        ...place,
+        at,
+        sessions: ids,
+        ...label(place.channelId),
+      };
+    });
+  const known = new Set(conversations.flatMap((row) => row.sessions ?? []));
+  const kept = starts
+    .filter(({ id }) => !known.has(id))
+    .reverse()
+    .slice(0, RECENT_LIMIT);
+  return { conversations, kept };
+}
+/** The recent rows: the opened conversation's channel first and the rest
+ * newest first, each kind then kept to its own limit so neither crowds out
+ * the other, and the opened conversation left out. */
+export function recentRows(
+  kinds: readonly (readonly Row[])[],
+  here: string | undefined,
+  channel: string | undefined,
+) {
+  const order = (a: Row, b: Row) =>
+    Number(b.channelId === channel) - Number(a.channelId === channel) ||
+    (b.at ?? 0) - (a.at ?? 0);
+  return kinds
+    .flatMap((rows) =>
+      rows
+        .filter((row) => row.key !== here)
+        .sort(order)
+        .slice(0, RECENT_LIMIT),
+    )
+    .sort(order);
+}
 /** Buzz titles a session `Agent · place · root`; the agent's name is the
  * profile's own. */
 const titled = (name: string, title: string) =>
@@ -859,53 +925,31 @@ export function createTabs({
       (listener) => runtime.subscribe(listener),
       () => runtime.sessions(agent.key),
     );
-    // Each conversation's sessions, saved or still running, read by id: no
-    // search of goose.
-    const saved = new Map(
-      runtime
-        .conversations(agent.key)
-        .map(({ key, at, sessions }) => [key, { at, sessions }]),
+    // Each read again only when a session changes, or once a lookup saved
+    // older sessions' starts.
+    // biome-ignore lint/correctness/useExhaustiveDependencies: a session change can save one.
+    const saved = useMemo(
+      () => runtime.conversations(agent.key),
+      [agent.key, live],
     );
-    for (const session of live)
-      if (session.sessionId && !saved.has(session.key))
-        saved.set(session.key, { at: session.at ?? Date.now(), sessions: [] });
-    const conversations = [...saved]
-      .sort(([, a], [, b]) => b.at - a.at)
-      .map(([key, { at, sessions }]): Row => {
-        const id = live.find((session) => session.key === key)?.sessionId;
-        const ids = [...new Set([...(id ? [id] : []), ...sessions])];
-        const place = placeOf(key);
-        return {
-          key,
-          sessionId: ids[0] ?? "",
-          title: "",
-          ...place,
-          at,
-          sessions: ids,
-          ...runtime.channelLabel(agent.key, place.channelId),
-        };
-      });
-    // Sessions of no conversation, such as a watch's or timer's turn: kept
-    // with what each session started with, and when, under its title. One
-    // started before that was kept takes both from one listing of goose's
-    // sessions, with no search; one goose no longer lists is left out.
-    const known = new Set(conversations.flatMap((row) => row.sessions ?? []));
-    const kept = runtime
-      .prompts(agent.key)
-      .sessions()
-      .filter(({ id }) => !known.has(id))
-      .reverse()
-      .slice(0, RECENT_LIMIT);
-    // Sessions kept before their start was: titled from goose's listing,
-    // and taken as gone only once a listing succeeded without them.
-    const untitled = kept
-      .filter((session) => session.at === undefined)
-      .map(({ id }) => id);
-    const wanted = untitled.join(" ");
     const [listed, setListed] = useState<
       | { wanted: string; rows: Map<string, GooseSessionRow> }
       | { wanted: string; error: string }
     >();
+    // biome-ignore lint/correctness/useExhaustiveDependencies: a lookup saves starts.
+    const starts = useMemo(
+      () => runtime.prompts(agent.key).sessions(),
+      [agent.key, live, listed],
+    );
+    const { conversations, kept } = activityRows(saved, live, starts, (id) =>
+      runtime.channelLabel(agent.key, id),
+    );
+    // Sessions kept before their start was: looked up once in goose's
+    // listing, which saves what it found and marks the rest gone.
+    const untitled = kept
+      .filter((session) => session.at === undefined)
+      .map(({ id }) => id);
+    const wanted = untitled.join(" ");
     const [round, setRound] = useState(0);
     const workspace = readConfig(agent.config).workspace;
     // A listing still answers for fewer sessions, as when one is saved.
@@ -916,7 +960,17 @@ export function createTabs({
       if (!wanted || settled) return;
       const abort = new AbortController();
       history.listed(workspace, new Set(untitled), abort.signal).then(
-        (rows) => setListed({ wanted, rows }),
+        async (rows) => {
+          await runtime.prompts(agent.key).remember(
+            new Map(
+              untitled.map((id) => {
+                const row = rows.get(id);
+                return [id, row ? { at: row.at, title: row.title } : GONE];
+              }),
+            ),
+          );
+          if (!abort.signal.aborted) setListed({ wanted, rows });
+        },
         (error: unknown) =>
           abort.signal.aborted || setListed({ wanted, error: message(error) }),
       );
@@ -931,7 +985,12 @@ export function createTabs({
           ? listed.error
           : undefined;
     const standalone = kept.flatMap(({ id, at, title = "" }): Row[] => {
-      const found = at === undefined ? titles?.get(id) : { at, title };
+      const found =
+        at === undefined
+          ? titles?.get(id)
+          : at !== GONE.at
+            ? { at, title }
+            : undefined;
       return found
         ? [
             {
@@ -986,17 +1045,11 @@ export function createTabs({
       initialTranscript && { initial: here, ...initialTranscript },
       close,
     );
-    // Each kind kept to its own limit, so neither crowds out the other, then
-    // the opened conversation's channel first and the rest newest first.
-    const channel = conversation?.channelId;
-    const rows = [conversations.slice(0, RECENT_LIMIT), standalone]
-      .flat()
-      .filter((row) => row.key !== here?.key)
-      .sort(
-        (a, b) =>
-          Number(b.channelId === channel) - Number(a.channelId === channel) ||
-          (b.at ?? 0) - (a.at ?? 0),
-      );
+    const rows = recentRows(
+      [conversations, standalone],
+      here?.key,
+      conversation?.channelId,
+    );
     // The open transcript follows its conversation's current sessions.
     const shown =
       open &&

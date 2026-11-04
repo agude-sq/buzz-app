@@ -540,6 +540,21 @@ describe("AgentSessions", () => {
     ]);
   });
 
+  it("keeps delivering past a damaged saved conversation, saving it afresh", async () => {
+    vi.useFakeTimers();
+    for (const sessions of [{ not: "a list" }, "s9", null, [7, "kept"]]) {
+      const store = new Map([
+        ["a", { at: 1, sessions } as unknown as SavedConversation],
+      ]);
+      const { sessions: agent } = setup({}, false, { store });
+      await agent.deliver("a", "one", 1);
+      const id = agent.snapshot()[0]?.sessionId;
+      expect(store.get("a")?.sessions).toEqual(
+        Array.isArray(sessions) ? [id, "kept"] : [id],
+      );
+    }
+  });
+
   it("dates a session by the messages it takes in and the turns it ends, not by a long turn keeping it open", async () => {
     vi.useFakeTimers();
     const { fake, sessions } = setup({}, true);
@@ -1145,6 +1160,39 @@ it("keeps saved conversations per agent in storage, most recent first", () => {
     at: 4,
     sessions: ["s1"],
   });
+  data.set(
+    "buzz.goose.sessions.v1",
+    JSON.stringify({
+      one: {
+        kept: {
+          at: 5,
+          sessions: [
+            "s1",
+            "s1",
+            3,
+            "x".repeat(300),
+            ...Array.from({ length: 12 }, (_, i) => `n${i}`),
+          ],
+        },
+        legacy: { at: 4 },
+        list: { at: 6, sessions: { 0: "s" } },
+        infinite: { at: null },
+        empty: null,
+      },
+      two: "damaged",
+    }),
+  );
+  expect(one.list()).toEqual([
+    [
+      "kept",
+      {
+        at: 5,
+        sessions: ["s1", ...Array.from({ length: 9 }, (_, i) => `n${i}`)],
+      },
+    ],
+    ["legacy", { at: 4 }],
+  ]);
+  expect(localSessions(storage, "two").list()).toEqual([]);
   data.set("buzz.goose.sessions.v1", "not json");
   expect(one.list()).toEqual([]);
 });

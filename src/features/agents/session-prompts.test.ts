@@ -169,3 +169,50 @@ it("shows a Pi prompt as the full system prompt's tagged sections", async () => 
     "core-memory",
   ]);
 });
+
+it("drops damaged saved sessions and keeps their neighbors", () => {
+  const storage = memory();
+  void storage.set(
+    `buzz.session-prompts.v1:goose:${AGENT}`,
+    JSON.stringify({
+      version: 1,
+      texts: ["hello"],
+      sessions: [
+        ["legacy", [["", 0]]],
+        ["started", null, { at: 5, title: "Gander · #general" }],
+        ["badStart", [], { at: "later", title: "x" }],
+        ["badParts", { 0: ["", 0] }],
+        [7, []],
+        ["x".repeat(300), []],
+        ["legacy", []],
+        null,
+      ],
+    }),
+  );
+  const prompts = sessionPrompts(storage, "goose", AGENT);
+  expect(prompts.sessions()).toEqual([
+    { id: "legacy" },
+    { id: "started", at: 5, title: "Gander · #general" },
+  ]);
+  expect(prompts.get("legacy")).toEqual([{ label: "", text: "hello" }]);
+});
+
+it("remembers how older sessions started, once, keeping their prompts", async () => {
+  const prompts = sessionPrompts(memory(), "goose", AGENT);
+  await prompts.save("old", [{ label: "", text: "a" }]);
+  await prompts.save("gone", [{ label: "", text: "b" }]);
+  await prompts.save("new", [], { at: 9, title: "kept" });
+  await prompts.remember(
+    new Map([
+      ["old", { at: 3, title: "Gander · #ops" }],
+      ["gone", { at: -1, title: "" }],
+      ["new", { at: 1, title: "replaced" }],
+    ]),
+  );
+  expect(prompts.sessions()).toEqual([
+    { id: "old", at: 3, title: "Gander · #ops" },
+    { id: "gone", at: -1, title: "" },
+    { id: "new", at: 9, title: "kept" },
+  ]);
+  expect(prompts.get("old")).toEqual([{ label: "", text: "a" }]);
+});

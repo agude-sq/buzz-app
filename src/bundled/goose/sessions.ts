@@ -3,6 +3,7 @@
 import {
   AgentSessions as AcpAgentSessions,
   type SessionsOptions as AcpSessionsOptions,
+  savedConversation,
 } from "../../features/agent-harness/acp/agent-sessions";
 import type { AgentProtection } from "../../features/agent-protection/service";
 import { nativeProtectionBridge } from "../../features/agent-protection/native-bridge";
@@ -130,15 +131,28 @@ export function localSessions(
   const readAll = (): Record<string, Record<string, SavedConversation>> => {
     try {
       const value = JSON.parse(storage.getItem(name) ?? "{}");
-      return value && typeof value === "object" ? value : {};
+      if (!value || typeof value !== "object" || Array.isArray(value))
+        return {};
+      // Each agent's damaged conversations are dropped, keeping the rest.
+      return Object.fromEntries(
+        Object.entries(value).map(([agent, saved]) => [
+          agent,
+          Object.fromEntries(
+            Object.entries(
+              saved && typeof saved === "object" ? saved : {},
+            ).flatMap(([key, conversation]) => {
+              const kept = savedConversation(conversation);
+              return kept ? [[key, kept]] : [];
+            }),
+          ),
+        ]),
+      );
     } catch {
       return {};
     }
   };
   const list = (saved: Record<string, SavedConversation> = {}) =>
-    Object.entries(saved)
-      .filter(([, conversation]) => typeof conversation?.at === "number")
-      .sort(([, a], [, b]) => b.at - a.at);
+    Object.entries(saved).sort(([, a], [, b]) => b.at - a.at);
   return {
     list: () => list(readAll()[agent]),
     get: (key) => readAll()[agent]?.[key],

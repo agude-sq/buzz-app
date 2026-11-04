@@ -821,12 +821,12 @@ export function createTabs({
     // Newest first, the opened conversation's channel above the rest.
     const recent = conversations
       .filter((item) => item.key !== here?.key)
-      .slice(0, CONVERSATION_LIMIT)
       .sort(
         (a, b) =>
           Number(b.channelId === conversation?.channelId) -
           Number(a.channelId === conversation?.channelId),
-      );
+      )
+      .slice(0, CONVERSATION_LIMIT);
     const activity = (key: string) => {
       const running = busy.get(key);
       return running === undefined ? undefined : running ? "Working" : "Idle";

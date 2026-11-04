@@ -24,6 +24,12 @@ import { type Config, DEFAULT_CONFIG, type GooseRuntime } from "./runtime";
 import { GooseSetup } from "./setup";
 import { createTabs } from "./tabs";
 import { GooseHistory } from "./transcript";
+import { localSessions } from "./sessions";
+import {
+  PROMPTS_PREFIX,
+  sessionPrompts,
+} from "../../features/agents/session-prompts";
+import { localStore } from "../../features/agents/store";
 
 /** New agent's fields read no sessions. */
 const unused = {
@@ -743,6 +749,8 @@ type World = {
   ids?: (string | { id: string; at: number; title: string })[];
   names?: Record<string, string>;
   scope?: Config["scope"];
+  /** Replaces parts of the fake runtime. */
+  runtime?: Partial<Record<keyof GooseRuntime, unknown>>;
 };
 
 /** Gander's Activity tab over `world`. */
@@ -770,7 +778,16 @@ function activity(
       shown: (turns: unknown) => turns,
       sessions: () =>
         (world.ids ?? []).map((id) => (typeof id === "string" ? { id } : id)),
+      remember: async (starts: Map<string, { at: number; title: string }>) => {
+        world.ids = (world.ids ?? []).map(
+          (id): NonNullable<World["ids"]>[number] =>
+            typeof id === "string" && starts.has(id)
+              ? { id, ...(starts.get(id) as { at: number; title: string }) }
+              : id,
+        );
+      },
     }),
+    ...world.runtime,
   } as unknown as GooseRuntime;
   const { ActivityTab } = createTabs({
     setup: new GooseSetup(fake),
@@ -1591,3 +1608,97 @@ it.each([false, true])(
     expect(screen.queryByRole("menuitem", { name: "Claude" })).toBeNull();
   },
 );
+
+it("looks older sessions up once: a second open lists nothing", async () => {
+  const fake = gooseHistory(["old"]);
+  const world: World = { saved: [], ids: ["gone", "old"] };
+  const first = activity(fake, world);
+  expect(
+    await screen.findByRole("button", {
+      name: "View transcript: #general · old",
+    }),
+  ).toBeInTheDocument();
+  const listings = searches(fake).length;
+  expect(listings).toBeGreaterThan(0);
+  first.unmount();
+  activity(fake, world);
+  expect(
+    screen.getByRole("button", { name: "View transcript: #general · old" }),
+  ).toBeInTheDocument();
+  expect(screen.queryByText("Loading older sessions…")).toBeNull();
+  expect(searches(fake)).toHaveLength(listings);
+  expect(world.ids).toEqual([
+    { id: "gone", at: -1, title: "" },
+    expect.objectContaining({ id: "old" }),
+  ]);
+});
+
+it("shows the good saved records when others are damaged", () => {
+  const data = new Map<string, string>([
+    [
+      "buzz.goose.sessions.v1",
+      JSON.stringify({
+        [GANDER]: {
+          chan: { at: 2, sessions: ["s1", 7, "s1"] },
+          broken: { at: 3, sessions: { not: "a list" } },
+          nulled: null,
+          stringy: { at: 4, sessions: "s9" },
+          other: { at: "soon" },
+        },
+      }),
+    ],
+  ]);
+  const storage = {
+    getItem: (key: string) => data.get(key) ?? null,
+    setItem: (key: string, value: string) => void data.set(key, value),
+  } as Storage;
+  const items = new Map<string, string>([
+    [
+      `${PROMPTS_PREFIX}goose:${GANDER}`,
+      JSON.stringify({
+        version: 1,
+        texts: [],
+        sessions: [
+          ["timer1", [], { at: 5, title: "Gander · timer/nightly" }],
+          ["bad", [], { at: 6, title: 42 }],
+          [null, []],
+          "junk",
+        ],
+      }),
+    ],
+  ]);
+  const prompts = sessionPrompts(
+    localStore({
+      get length() {
+        return items.size;
+      },
+      key: (index: number) => [...items.keys()][index] ?? null,
+      getItem: (key: string) => items.get(key) ?? null,
+      setItem: (key: string, value: string) => void items.set(key, value),
+      removeItem: (key: string) => void items.delete(key),
+      clear: () => items.clear(),
+    }),
+    "goose",
+    GANDER,
+  );
+  activity(gooseHistory(), {
+    saved: [],
+    runtime: {
+      conversations: () =>
+        localSessions(storage, GANDER)
+          .list()
+          .map(([key, { at, sessions = [] }]) => ({ key, at, sessions })),
+      prompts: () => prompts,
+    },
+  });
+  expect(
+    screen
+      .getAllByRole("listitem")
+      .map((item) =>
+        within(item).getByRole("button").getAttribute("aria-label"),
+      ),
+  ).toEqual([
+    "View transcript: timer/nightly",
+    "View transcript: chan · channel",
+  ]);
+});
