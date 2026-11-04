@@ -739,6 +739,7 @@ type World = {
   /** Every session's id with a kept prompt, oldest first. */
   ids?: string[];
   names?: Record<string, string>;
+  scope?: Config["scope"];
 };
 
 /** Gander's Activity tab over `world`. */
@@ -781,7 +782,7 @@ function activity(
           name: "Gander",
           type: "buzz.goose/goose",
           owner: "a".repeat(64),
-          config: DEFAULT_CONFIG,
+          config: { ...DEFAULT_CONFIG, scope: world.scope ?? "thread" },
         } as Agent<Config>
       }
       {...props}
@@ -923,6 +924,53 @@ it("finds a thread's conversation in its channel's saved session", async () => {
   );
   expect(await screen.findByText("Hi from goose")).toBeInTheDocument();
   expect(searches(fake)).toEqual([]);
+});
+
+it("opens a channel-scoped agent's channel from a thread, following its first save", async () => {
+  const fake = gooseHistory();
+  const { change } = activity(
+    fake,
+    { saved: [], scope: "channel" },
+    undefined,
+    {
+      conversation: { channelId: "chan", rootId: ROOT },
+      initialTranscript: { opening: 1, done: vi.fn() },
+    },
+  );
+  expect(
+    await screen.findByText(/Buzz saved no goose session/),
+  ).toBeInTheDocument();
+  change({ saved: [{ key: "chan", at: 1, sessions: ["s1"] }] });
+  expect(await screen.findByText("Hi from goose")).toBeInTheDocument();
+  expect(searches(fake)).toEqual([]);
+});
+
+it("searches a thread-scoped agent's thread past an empty saved channel record", async () => {
+  const fake = gooseHistory();
+  activity(fake, { saved: [{ key: "chan", at: 1, sessions: [] }] }, undefined, {
+    conversation: { channelId: "chan", rootId: ROOT },
+    initialTranscript: { opening: 1, done: vi.fn() },
+  });
+  await userEvent
+    .setup()
+    .click(
+      await screen.findByRole("button", { name: "Search older sessions" }),
+    );
+  expect(await screen.findByText("Hi from goose")).toBeInTheDocument();
+});
+
+it("keeps a standalone run listed past a full page of saved conversations", () => {
+  activity(gooseHistory(), {
+    saved: Array.from({ length: 30 }, (_, at) => ({
+      key: `chan${at}`,
+      at,
+      sessions: [`c${at}`],
+    })),
+    ids: ["timer1"],
+  });
+  expect(
+    screen.getByRole("button", { name: "View transcript: Session timer1" }),
+  ).toBeInTheDocument();
 });
 
 it("says when goose no longer has a conversation's saved sessions", async () => {

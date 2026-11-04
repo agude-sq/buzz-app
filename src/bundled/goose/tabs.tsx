@@ -19,7 +19,6 @@ import {
 } from "../../features/agents/ModelPicker";
 import {
   OpenedConversation,
-  useOpenedSession,
   useOpenTranscript,
 } from "../../features/agents/OpenedConversation";
 import type {
@@ -894,29 +893,32 @@ export function createTabs({
       .filter((id) => !known.has(id))
       .reverse()
       .map((id): Row => ({ key: id, sessionId: id, title: "", channelId: "" }));
-    const {
-      session: here,
-      searching,
-      error: lookupError,
-    } = useOpenedSession(
-      conversations.filter((row) => row.sessionId),
-      conversation,
-      // Not saved: its transcript offers to search goose's history. A
-      // thread's channel is tried first, for an agent that keeps one session
-      // per channel.
-      async (place) =>
-        place.root && conversations.some((row) => row.key === place.channelId)
-          ? undefined
-          : {
-              key: place.root
-                ? `${place.channelId}/${place.root}`
-                : place.channelId,
-              sessionId: "",
-              title: "",
-              ...place,
-              ...runtime.channelLabel(agent.key, place.channelId),
-            },
-    );
+    // The opened conversation's session: a thread's saved or live one, else
+    // its channel's, read again each render so a first save is picked up.
+    // With neither, its transcript offers to search goose's history, in the
+    // place the agent keeps its sessions.
+    const match = (channelId: string, root?: string) =>
+      conversations.find(
+        (row) =>
+          row.sessionId && row.channelId === channelId && row.root === root,
+      );
+    const here =
+      conversation &&
+      (() => {
+        const { channelId, rootId } = conversation;
+        const found = (rootId && match(channelId, rootId)) || match(channelId);
+        if (found) return found;
+        const root =
+          readConfig(agent.config).scope === "channel" ? undefined : rootId;
+        return {
+          key: root ? `${channelId}/${root}` : channelId,
+          sessionId: "",
+          title: "",
+          channelId,
+          ...(root && { root }),
+          ...runtime.channelLabel(agent.key, channelId),
+        } satisfies Row;
+      })();
     const busy = (sessionId: string) =>
       live.find((session) => session.sessionId === sessionId)?.busy;
     const status = (sessionId: string) => {
@@ -932,16 +934,20 @@ export function createTabs({
     const { open, show, back } = useOpenTranscript(
       conversation,
       label,
-      initialTranscript && { initial: here, searching, ...initialTranscript },
+      initialTranscript && { initial: here, ...initialTranscript },
       close,
     );
-    const rows = [...conversations, ...standalone]
-      .filter((row) => row.key !== here?.key)
-      .slice(0, RECENT_LIMIT);
+    // Each kept to its own limit, so saved conversations never crowd out a
+    // watch's or timer's newest runs.
+    const rows = [conversations, standalone].flatMap((group) =>
+      group.filter((row) => row.key !== here?.key).slice(0, RECENT_LIMIT),
+    );
     // The open transcript follows its conversation's current sessions.
     const shown =
       open &&
-      ([...conversations, ...standalone].find((row) => row.key === open.key) ??
+      ([...conversations, ...standalone, ...(here ? [here] : [])].find(
+        (row) => row.key === open.key,
+      ) ??
         open);
     return (
       <div className={activityStyles.activity}>
@@ -950,8 +956,6 @@ export function createTabs({
             conversation={conversation}
             harness="goose"
             session={here}
-            searching={searching}
-            error={lookupError}
             status={here && status(here.sessionId)}
             onView={() => here && show(here)}
           />
