@@ -58,8 +58,12 @@ mod keep_awake;
 #[cfg(target_os = "macos")]
 mod legacy_cli_shortcut;
 mod legacy_communities;
+#[cfg(target_os = "macos")]
+mod media_context_menu;
 #[cfg(any(not(target_os = "macos"), test))]
 mod microphone;
+#[cfg(target_os = "macos")]
+mod mouse_nav;
 
 mod notifications;
 mod os_idle;
@@ -905,6 +909,8 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             notifications::macos::init();
             #[cfg(target_os = "macos")]
+            mouse_nav::install(app.handle());
+            #[cfg(target_os = "macos")]
             if let Some(home) = dirs::home_dir() {
                 if let Err(error) = legacy_cli_shortcut::remove_stale(&home.join(".local/bin")) {
                     eprintln!("Could not remove old Buzz's CLI shortcut: {error}");
@@ -940,6 +946,26 @@ pub fn run() {
                     app.manage(stream);
                 }
                 Err(error) => eprintln!("Could not start the media listener: {error}"),
+            }
+            #[cfg(target_os = "macos")]
+            if let Some(main) = app.get_webview_window("main") {
+                let handle = app.handle().clone();
+                let directory = app.path().download_dir().ok();
+                let stream = app
+                    .try_state::<relay::MediaStream>()
+                    .map(|stream| stream.base().to_owned());
+                // Packaged builds keep `devUrl` in their config but never load it.
+                let dev = app
+                    .config()
+                    .build
+                    .dev_url
+                    .clone()
+                    .filter(|_| tauri::is_dev());
+                if let Err(error) = main.with_webview(move |webview| {
+                    media_context_menu::install(&webview, handle, directory, stream, dev)
+                }) {
+                    eprintln!("Could not prepare the media menu: {error}");
+                }
             }
             // Only app-owned storage is created; a development build keeps its agents
             // in the installed app's (`legacy_identifier::agents`). Preview uses the
@@ -1129,6 +1155,8 @@ pub(crate) fn shut_down<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     app.state::<federated_identity::socket::Sockets>().clear();
     app.state::<relay::Spools>()
         .cancel_all(&app.state::<relay::Uploads>());
+    #[cfg(target_os = "macos")]
+    media_context_menu::discard_pending();
     app.state::<clipboard::Clipboard>().release();
     app.state::<HostProcesses>().shutdown();
     host_command::stop_login_shell_probe();

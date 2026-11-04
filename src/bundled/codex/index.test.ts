@@ -25,6 +25,7 @@ function applied(binding?: AgentExecutionBinding) {
   let type: AgentType | undefined;
   const subscribe = () => () => undefined;
   const ctx = {
+    agentProtection: { registerModels: vi.fn() },
     pluginOwner: { id: "buzz.codex", revision: "r1" },
     host: { spawn: vi.fn(), readFile: vi.fn(), request: vi.fn() },
     agents: {
@@ -128,6 +129,7 @@ it("stops agents that stop running even when the agent list could not be read", 
   let state = { status: "ready", agents: [agent], running: [agent] };
   let notify = () => undefined;
   apply({
+    agentProtection: { registerModels: vi.fn() },
     pluginOwner: { id: "buzz.codex" },
     host: { spawn: vi.fn(), request: vi.fn() },
     agents: {
@@ -195,6 +197,7 @@ it("starts the server once Codex is updated and checked, only while a Codex agen
   };
   let cleanup: () => void = () => undefined;
   apply({
+    agentProtection: { registerModels: vi.fn() },
     pluginOwner: { id: "buzz.codex" },
     host: { spawn: vi.fn(), request: vi.fn() },
     agents: {
