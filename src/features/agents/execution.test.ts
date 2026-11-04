@@ -235,6 +235,37 @@ it("retires owned processes on adapter unload and never opens local execution fo
   expect(f.registry.read(agent)?.config).toEqual(input.config);
 });
 
+it.each(["process", "target"] as const)(
+  "retries failed %s cleanup and shares pending and successful disposal",
+  async (owner) => {
+    const f = await setup();
+    await f.registry.bind(f.plugin, agent, harness, input);
+    const execution = await f.registry.open(f.native, agent, harness, session);
+    if (!execution) throw new Error("Missing bound execution");
+    await execution.spawn("node");
+    const cleanup =
+      owner === "process" ? f.process.kill : vi.mocked(f.target.dispose);
+    cleanup.mockRejectedValueOnce(new Error("cleanup failed"));
+    const first = execution.dispose();
+    expect(execution.dispose()).toBe(first);
+    await expect(first).rejects.toThrow("cleanup failed");
+    expect(execution.signal.aborted).toBe(true);
+    await expect(execution.spawn("node")).rejects.toBe(execution.signal.reason);
+    const pending = deferred<void>();
+    cleanup.mockReturnValueOnce(pending.promise);
+    const retry = execution.dispose();
+    expect(execution.dispose()).toBe(retry);
+    try {
+      await vi.waitFor(() => expect(cleanup).toHaveBeenCalledTimes(2));
+    } finally {
+      pending.resolve();
+    }
+    await retry;
+    expect(execution.dispose()).toBe(retry);
+    expect(cleanup).toHaveBeenCalledTimes(2);
+  },
+);
+
 it("kills a process that finishes starting after its adapter unloads", async () => {
   const f = await setup();
   const starting = deferred<typeof f.process>();

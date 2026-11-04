@@ -25,7 +25,7 @@ export type AgentExecutionTarget = Readonly<{
     options?: Readonly<{ cwd?: string }>,
   ): Promise<Uint8Array>;
   resolveDirectory(path: string): Promise<string>;
-  /** Stops owned processes. Repeated calls have the same result. */
+  /** Shares pending cleanup and retries failed cleanup. */
   dispose(): Promise<void>;
 }>;
 
@@ -359,7 +359,11 @@ export function createAgentExecutions(root: Context, storage: AgentStore) {
                 Promise.all([...processes].map((process) => process.kill())),
               )
               .then(() => undefined)
-              .finally(() => target.dispose());
+              .finally(() => target.dispose())
+              .catch((error) => {
+                disposed = undefined;
+                throw error;
+              });
             lifetime.abort(new Error("The agent execution stopped"));
             return disposed;
           },
