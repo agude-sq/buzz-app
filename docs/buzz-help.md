@@ -204,6 +204,9 @@ that agent in Buzz; they do not notify the external app through this connection.
   Use **Leave chat** or **Leave channel** to remove your membership and sidebar
   entry. Joined viewers keep reading after a switch to Private until they leave
   or are removed in People.
+- **Pasted web links** keep their labels when the clipboard's HTML and plain
+  text agree, including image alt text. Use ordinary paste; plain-text paste
+  uses only the clipboard's plain text.
 - **Long text pastes** that exceed the message limit show an error and leave
   your draft unchanged. Shorten the text, or save it as a text file and use
   **Attach files** where uploads are available.
