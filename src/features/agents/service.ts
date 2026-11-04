@@ -310,6 +310,9 @@ export type AgentViewProps<Config = unknown> = {
  * starting config, from `defaults`, to fill in. The app owns its key, name and
  * picture around it. */
 export type AgentCreateProps<Config = unknown> = {
+  /** Existing cards supply their membership and scoped settings action. */
+  agent?: Agent<Config>;
+  openSettings?: () => void;
   /** Model fields may use the compact card treatment in the library. */
   modelAppearance?: "glass-ghost";
   config: Config;

@@ -491,6 +491,7 @@ export function createTabs(
     return {
       ...state,
       bound: inspected.bound,
+      local: !inspected.bound && !inspected.checking && !inspected.error,
       ...(inspected.bound || inspected.checking || inspected.error
         ? {
             data: undefined,
@@ -504,12 +505,22 @@ export function createTabs(
   }
 
   function CreateModel({
+    agent,
+    openSettings,
     config,
     onChange,
     ...props
   }: AgentCreateProps<Config>) {
     const current = readConfig(config);
-    const { data, checking, error, defaults: providerDefaults } = useProvider();
+    const {
+      data,
+      checking,
+      error,
+      defaults: providerDefaults,
+      bound,
+      local,
+      check,
+    } = useProvider(agent);
     // The setup's status holds through the provider's next check, so the
     // button, and its focus, stays put as Install Codex becomes Sign in.
     const { status } = useSyncExternalStore(
@@ -517,9 +528,10 @@ export function createTabs(
       login.snapshot,
       login.snapshot,
     );
-    const retry = () => void provider.check();
-    const step =
-      status?.state === "missing" || error === NOT_INSTALLED
+    const retry = check;
+    const step = !local
+      ? undefined
+      : status?.state === "missing" || error === NOT_INSTALLED
         ? "install"
         : status?.state === "signed-out" || error === SIGN_IN_ERROR
           ? "login"
@@ -541,6 +553,18 @@ export function createTabs(
       if (unfocused())
         field.current?.querySelector<HTMLElement>('[role="combobox"]')?.focus();
     }, [step, checking]);
+    if (bound)
+      return (
+        <Button
+          variant={props.modelAppearance ?? "ghost"}
+          size="xs"
+          aria-label="Model settings"
+          disabled={props.disabled || !openSettings}
+          onClick={openSettings}
+        >
+          {current.model || "Codex default"}
+        </Button>
+      );
     if (step)
       return (
         <CodexSignIn

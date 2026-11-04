@@ -1810,6 +1810,32 @@ it("shows the recent empty state when only the current runtime session exists", 
   ).not.toHaveAttribute("open");
 });
 
+it("opens scoped model settings from a remote card when local Codex is unavailable", async () => {
+  localStorage.setItem(
+    "buzz.codex.provider-defaults.v1",
+    JSON.stringify({ version: 1, model: "laptop-model", effort: "" }),
+  );
+  const f = fixture({ installed: false, binding: { provider: "test/guest" } });
+  await f.provider.check();
+  f.spawn.mockClear();
+  const openSettings = vi.fn();
+  render(
+    <f.tabs.CreateModel
+      agent={f.props().agent}
+      config={defaults}
+      disabled={false}
+      onChange={vi.fn()}
+      openSettings={openSettings}
+    />,
+  );
+  const control = await screen.findByRole("button", { name: "Model settings" });
+  expect(control).toHaveTextContent("Codex default");
+  expect(screen.queryByText("Install Codex")).not.toBeInTheDocument();
+  await userEvent.setup().click(control);
+  expect(openSettings).toHaveBeenCalledOnce();
+  expect(f.spawn).not.toHaveBeenCalled();
+});
+
 it("keeps remote settings read-only without opening a model catalog", async () => {
   const f = fixture({ binding: { provider: "test/guest" } });
   render(<f.tabs.SettingsTab {...f.props()} />);
