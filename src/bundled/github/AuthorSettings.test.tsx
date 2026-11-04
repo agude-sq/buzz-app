@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it } from "vitest";
 import { AuthorSettings } from "./AuthorSettings";
 import { DEFAULT_RULES, loadPolicy, POLICY_KEY } from "./authors";
+import { GhUnavailable, type GitHubCli } from "./gh";
 
 afterEach(() => {
   cleanup();
@@ -82,4 +83,29 @@ it("shows saved rules that no longer parse, with why, until they are fixed", asy
   expect(loadPolicy().error).toBeUndefined();
   expect(rules).toBeValid();
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
+});
+
+it("names the account gh is signed in to, which author:@me means", async () => {
+  const queries: string[] = [];
+  const gh = (async (query: string) => {
+    queries.push(query);
+    return { viewer: { login: "octocat" } };
+  }) as GitHubCli;
+  render(<AuthorSettings active={() => true} gh={gh} />);
+  expect(
+    await screen.findByText("Signed in to GitHub as octocat through gh."),
+  ).toBeInTheDocument();
+  expect(queries).toEqual(["query{viewer{login}}"]);
+});
+
+it("says when gh cannot name the account", async () => {
+  const gh = (async () => {
+    throw new GhUnavailable("gh: not logged in");
+  }) as GitHubCli;
+  render(<AuthorSettings active={() => true} gh={gh} />);
+  expect(
+    await screen.findByText(
+      "gh couldn’t read your GitHub account. Run gh auth login, then reopen this page.",
+    ),
+  ).toBeInTheDocument();
 });

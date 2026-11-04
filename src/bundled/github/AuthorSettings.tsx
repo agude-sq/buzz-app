@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Header } from "../../shared/design-system/ui/Header";
@@ -6,9 +6,16 @@ import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { loadPolicy, open, parse, savePolicy, type Rule } from "./authors";
+import type { GitHubCli } from "./gh";
 
 /** Whose pull request comments and reviews wake agents watching it. */
-export function AuthorSettings({ active }: { active(): boolean }) {
+export function AuthorSettings({
+  active,
+  gh,
+}: {
+  active(): boolean;
+  gh?: GitHubCli | undefined;
+}) {
   const [saved, setSaved] = useState(loadPolicy);
   const [draft, setDraft] = useState(saved.text);
   const [fallback, setFallback] = useState(saved.fallback);
@@ -22,9 +29,9 @@ export function AuthorSettings({ active }: { active(): boolean }) {
     parsed.text !== saved.text ||
     fallback !== saved.fallback;
   return (
-    <section aria-label="GitHub comment authors settings">
+    <section aria-label="GitHub settings">
       <Header
-        title="GitHub comment authors"
+        title="GitHub"
         subtitle="Agents watching a pull request are woken by CI, and by the comments and reviews these rules allow."
       />
       <form
@@ -46,6 +53,7 @@ export function AuthorSettings({ active }: { active(): boolean }) {
         }}
       >
         <SettingsGroup layout="form">
+          <Account gh={gh} />
           {saved.error !== undefined && (
             <p role="status" className="m-0 text-body-sm text-subtle">
               Your saved rules no longer parse, so no comment or review wakes
@@ -99,5 +107,36 @@ export function AuthorSettings({ active }: { active(): boolean }) {
         </SettingsGroup>
       </form>
     </section>
+  );
+}
+/** Who author:@me is: the account the person's `gh` is signed in to. */
+function Account({ gh }: { gh: GitHubCli | undefined }) {
+  /** The login, or null when `gh` could not say. */
+  const [login, setLogin] = useState<string | null>();
+  useEffect(() => {
+    if (!gh) return;
+    const stop = new AbortController();
+    gh<{ viewer: { login: string } }>(
+      "query{viewer{login}}",
+      {},
+      stop.signal,
+    ).then(
+      ({ viewer }) => setLogin(viewer.login),
+      () => {
+        if (!stop.signal.aborted) setLogin(null);
+      },
+    );
+    return () => stop.abort();
+  }, [gh]);
+  return (
+    <p className="m-0 text-body-sm text-subtle">
+      {!gh
+        ? "Your GitHub account is the one gh is signed in to in the desktop app."
+        : login === undefined
+          ? "Checking which GitHub account gh is signed in to…"
+          : login
+            ? `Signed in to GitHub as ${login} through gh.`
+            : "gh couldn’t read your GitHub account. Run gh auth login, then reopen this page."}
+    </p>
   );
 }

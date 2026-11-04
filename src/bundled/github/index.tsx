@@ -201,10 +201,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.inject(["settingsCards"], (scope) => {
     scope.settingsCards.register({
       id: "authors",
-      title: "GitHub comment authors",
+      title: "GitHub",
       group: "Plugins",
       icon: GithubLogoIcon,
-      component: ({ active }) => <AuthorSettings active={active} />,
+      component: ({ active }) => <AuthorSettings active={active} gh={gh} />,
     });
   });
 };
