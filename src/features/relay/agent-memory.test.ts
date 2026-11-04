@@ -140,8 +140,12 @@ it("reports denied/error separately, retries, rejects malformed host output and 
     status: "ready",
     listing: { entries: [], partial: false },
   });
+  // A failed refresh keeps what the view showed.
   await view.refresh();
-  expect(view.snapshot()).toEqual({ status: "error" });
+  expect(view.snapshot()).toEqual({
+    status: "error",
+    listing: { entries: [], partial: false },
+  });
   for (let i = 0; i < 3; i++) h.session.agentMemories.open(agent.pubkey);
   expect(() => h.session.agentMemories.open(agent.pubkey)).toThrow();
   view.dispose();

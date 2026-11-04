@@ -697,7 +697,16 @@ export async function connectNativeTransport(
           id,
           onPage: onPage
             ? new Channel<unknown>((page) => {
-                if (!bounded.aborted) onPage(memoryListing(page));
+                if (bounded.aborted) return;
+                let listing: MemoryListing;
+                try {
+                  listing = memoryListing(page);
+                } catch {
+                  // The result is validated in full; an invalid page only
+                  // goes unshown.
+                  return;
+                }
+                onPage(listing);
               })
             : null,
         });

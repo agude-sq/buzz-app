@@ -425,7 +425,8 @@ pub(crate) async fn relay_agent_memories_read<R: tauri::Runtime>(
     else {
         return Err("Memory read cancelled".into());
     };
-    // Dropping the read stops its paging and frees what it decoded.
+    // Dropping the read stops its paging, and a running decode at its next
+    // record.
     let result = tokio::select! {
         biased;
         _ = cancelled => Err("Memory read cancelled".into()),
@@ -436,7 +437,9 @@ pub(crate) async fn relay_agent_memories_read<R: tauri::Runtime>(
 }
 
 /// Reads the listing; with `on_page`, each decoded page's new or changed
-/// heads go there as they land, and no overall deadline cuts the read short.
+/// heads go there as they land. No overall deadline cuts a streamed read
+/// short: at worst its 64 requests each wait out a page, about ten minutes,
+/// until its view closes and cancels it.
 async fn read_agent_memories(
     host: &IdentityHost,
     fi: &FederatedIdentity,
@@ -483,13 +486,11 @@ async fn read_agent_memories(
         };
         filter["#d"] = json!([address?]);
     }
-    let decode = |records: Vec<Option<Value>>, decoder: MemoryDecoding, stop| {
-        let (viewer, agent) = (viewer.clone(), agent.clone());
-        host.with_key(move |secret, now| {
-            decode_memory_events(&decoder, secret, now, &viewer, &agent, &records, || {
-                std::time::Instant::now() >= stop
-            })
-        })
+    // However the read ends, cancelled or done, a decode still running on a
+    // blocking worker stops at its next record and releases the identity.
+    let ended = ReadEnd::default();
+    let decode = |records, decoder, stop| {
+        decode_page(host, &viewer, &agent, records, decoder, stop, ended.flag())
     };
     let mut listing = read_memories(
         budget,
@@ -516,6 +517,42 @@ async fn read_agent_memories(
         }
     }
     Ok(listing)
+}
+
+/// Set when its memory read ends, however it ends: dropping the read drops
+/// it too, so decodes the read started stop.
+#[derive(Default)]
+struct ReadEnd(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl ReadEnd {
+    fn flag(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+        self.0.clone()
+    }
+}
+
+impl Drop for ReadEnd {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Decodes `records` into `decoder` under the identity, stopping at `stop`
+/// or once `ended` is set.
+fn decode_page<'a>(
+    host: &'a IdentityHost,
+    viewer: &str,
+    agent: &str,
+    records: Vec<Option<Value>>,
+    decoder: MemoryDecoding,
+    stop: std::time::Instant,
+    ended: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> impl std::future::Future<Output = Result<()>> + 'a {
+    let (viewer, agent) = (viewer.to_owned(), agent.to_owned());
+    host.with_key(move |secret, now| {
+        decode_memory_events(&decoder, secret, now, &viewer, &agent, &records, || {
+            ended.load(std::sync::atomic::Ordering::Relaxed) || std::time::Instant::now() >= stop
+        })
+    })
 }
 
 /// One page of the memory listing at `url`, sent with the community's
@@ -886,6 +923,10 @@ fn decode_memory_events(
                 json!({"slug": name, "body": body, "eventId": event.id, "createdAt": event.created_at}),
             ))
         })();
+        if expired() {
+            lock().partial = true;
+            break;
+        }
         let mut decoder = lock();
         let MemoryDecoder {
             heads,
@@ -1604,8 +1645,9 @@ mod tests {
         let checks = std::cell::Cell::new(0);
         let listing =
             decode_memories_with_key(&secret, &viewer, &viewer, &agent, &records(&events), || {
+                // Checked before each record and before keeping it.
                 checks.set(checks.get() + 1);
-                checks.get() > 10
+                checks.get() > 20
             })
             .unwrap();
         assert_eq!(listing["partial"], true);
@@ -1950,6 +1992,42 @@ mod tests {
         .unwrap();
         assert!(partial);
         assert!(records.is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn ending_a_memory_read_stops_its_blocking_decode_and_frees_the_identity() {
+        let host = IdentityHost::fixture();
+        let (_, viewer, agent, events) = memory_events(MEMORY_EVENTS as u64, 64);
+        let decoder = MemoryDecoding::default();
+        let ended = ReadEnd::default();
+        let far = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        let (worker, kept, flag) = (host.clone(), decoder.clone(), ended.flag());
+        let records = events.into_iter().map(Some).collect();
+        let decoding = tokio::spawn(async move {
+            decode_page(&worker, &viewer, &agent, records, kept, far, flag).await
+        });
+        // Wait until the blocking worker is decoding, then cancel the read.
+        while decoder.lock().unwrap().heads.is_empty() {
+            tokio::task::yield_now().await;
+        }
+        drop(ended);
+        decoding.abort();
+        let started = std::time::Instant::now();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            host.with_key(|_, _| Ok(())),
+        )
+        .await
+        .expect("the identity is released")
+        .unwrap();
+        let decoder = decoder.lock().unwrap();
+        assert!(decoder.partial);
+        assert!(
+            decoder.heads.len() < MEMORY_EVENTS,
+            "{}",
+            decoder.heads.len()
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
     }
 
     #[tokio::test(flavor = "multi_thread")]

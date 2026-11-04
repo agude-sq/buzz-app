@@ -78,7 +78,6 @@ export async function memoryResponseText(response: Response): Promise<string> {
   }
 }
 
-/** Validate the host DTO before retaining plaintext, including aggregate size. */
 /** An entry's share of a listing's text budget. */
 function entryBytes(entry: MemoryEntry) {
   const { slug, body, eventId, createdAt } = entry;
@@ -108,6 +107,7 @@ export function forgetMemoryListingsOnSelection(communities: {
     forgetMemoryListings();
   });
 }
+/** Validate the host DTO before retaining plaintext, including aggregate size. */
 export function memoryListing(input: unknown): MemoryListing {
   const value = input as MemoryListing | null;
   if (
@@ -163,6 +163,58 @@ export function memoryListing(input: unknown): MemoryListing {
     ...(deleted.length ? { deleted: Object.freeze(deleted) } : {}),
     partial: value.partial,
   });
+}
+
+/** Merges each streamed page into one listing: a page names its slugs' newest
+ * heads, so a later page's entry replaces an earlier one. `cached` entries
+ * only fill in until fresh ones arrive; they give way, oldest first, to keep
+ * the listing within budget. Each entry is measured once. */
+export function mergePage(cached: MemoryListing | undefined) {
+  const stale = new Map(
+    [...(cached?.entries ?? [])]
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .map((entry) => [entry.slug, entry]),
+  );
+  const fresh = new Map<string, MemoryEntry>();
+  const sizes = new Map<string, number>();
+  let bytes = 0;
+  for (const entry of stale.values()) {
+    const size = entryBytes(entry);
+    sizes.set(entry.slug, size);
+    bytes += size;
+  }
+  const drop = (slug: string) => {
+    bytes -= sizes.get(slug) ?? 0;
+    sizes.delete(slug);
+    stale.delete(slug);
+    fresh.delete(slug);
+  };
+  return (page: MemoryListing): MemoryListing => {
+    for (const entry of page.entries) {
+      drop(entry.slug);
+      const size = entryBytes(entry);
+      fresh.set(entry.slug, entry);
+      sizes.set(entry.slug, size);
+      bytes += size;
+    }
+    for (const entry of page.deleted ?? []) drop(entry.slug);
+    for (const slug of stale.keys()) {
+      if (
+        fresh.size + stale.size <= LISTING_ENTRIES &&
+        bytes <= LISTING_TEXT_BYTES
+      )
+        break;
+      drop(slug);
+    }
+    return Object.freeze({
+      entries: Object.freeze(
+        [...fresh.values(), ...stale.values()].sort((a, b) =>
+          a.slug.localeCompare(b.slug),
+        ),
+      ),
+      partial: true,
+    });
+  };
 }
 
 /** How long a closed view's last listing stays in memory, so reopening it
@@ -241,7 +293,9 @@ export function createAgentMemories(
         const owned = new AbortController();
         controller = owned;
         const admitted = keeping;
-        const cached = kept.get(agent)?.listing;
+        // What the view shows, a failed read's included, fills in until
+        // fresh entries arrive.
+        const cached = snapshot.listing ?? kept.get(agent)?.listing;
         publish(
           cached
             ? { status: "loading", listing: cached }
@@ -252,49 +306,11 @@ export function createAgentMemories(
           const signal = owned.signal;
           const listing = memoryListing(
             await retryRead((signal) => {
-              // Each attempt starts its own listing; a page names its slugs'
-              // newest heads, so a later page's entry replaces an earlier one.
-              // Cached entries only fill in until fresh ones arrive; they
-              // give way, oldest first, to keep the listing within budget.
-              const stale = new Map(
-                [...(cached?.entries ?? [])]
-                  .sort((a, b) => a.createdAt - b.createdAt)
-                  .map((entry) => [entry.slug, entry]),
-              );
-              const fresh = new Map<string, MemoryEntry>();
+              // Each attempt starts its own listing.
+              const merge = mergePage(cached);
               return source(agent, signal, undefined, (page) => {
                 if (signal.aborted || !available()) return;
-                for (const entry of page.entries) {
-                  stale.delete(entry.slug);
-                  fresh.set(entry.slug, entry);
-                }
-                for (const entry of page.deleted ?? []) {
-                  stale.delete(entry.slug);
-                  fresh.delete(entry.slug);
-                }
-                let bytes = 0;
-                for (const entry of [...fresh.values(), ...stale.values()])
-                  bytes += entryBytes(entry);
-                for (const [slug, entry] of stale) {
-                  if (
-                    fresh.size + stale.size <= LISTING_ENTRIES &&
-                    bytes <= LISTING_TEXT_BYTES
-                  )
-                    break;
-                  stale.delete(slug);
-                  bytes -= entryBytes(entry);
-                }
-                publish({
-                  status: "loading",
-                  listing: Object.freeze({
-                    entries: Object.freeze(
-                      [...fresh.values(), ...stale.values()].sort((a, b) =>
-                        a.slug.localeCompare(b.slug),
-                      ),
-                    ),
-                    partial: true,
-                  }),
-                });
+                publish({ status: "loading", listing: merge(page) });
               });
             }, signal),
           );
@@ -307,13 +323,16 @@ export function createAgentMemories(
                 : { status: "blocked" },
             );
         } catch (error) {
+          // A failed refresh keeps what it showed, beside Retry; denial
+          // clears it. Invalidation and retirement abort, publishing nothing.
           if (!owned.signal.aborted)
-            publish({
-              status:
-                error instanceof Error && error.name === "MemoryDenied"
-                  ? "denied"
-                  : "error",
-            });
+            publish(
+              error instanceof Error && error.name === "MemoryDenied"
+                ? { status: "denied" }
+                : snapshot.listing && available()
+                  ? { status: "error", listing: snapshot.listing }
+                  : { status: "error" },
+            );
         } finally {
           if (controller === owned) controller = undefined;
         }

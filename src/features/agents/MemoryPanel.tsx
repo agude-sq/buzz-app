@@ -160,7 +160,8 @@ export function MemoryPanel({
   ) : null;
   return (
     <div className="grid min-w-0 grid-cols-1 content-start gap-6">
-      {(status === "ready" || status === "loading") && listing ? (
+      {(status === "ready" || status === "loading" || status === "error") &&
+      listing ? (
         <>
           <MemorySection
             title="Core memories"
@@ -192,6 +193,13 @@ export function MemoryPanel({
                 aria-hidden="true"
               />
               Loading more memories…
+            </div>
+          ) : status === "error" ? (
+            <div className="flex items-center justify-between gap-2">
+              <p role="alert" className="m-0 text-body-sm text-danger">
+                {MESSAGES.error}
+              </p>
+              {refreshButton}
             </div>
           ) : (
             listing.partial && (

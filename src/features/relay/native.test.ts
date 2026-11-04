@@ -1357,6 +1357,34 @@ it("streams memory pages as they land and cancels native paging on abort", async
   await expect(read).rejects.toThrow();
 });
 
+it("skips a streamed Memory page that fails validation and still answers", async () => {
+  const transport = await connectNativeTransport(community);
+  const agent = keypair();
+  const entry = {
+    slug: "mem/a",
+    body: "a",
+    eventId: "1".padStart(64, "0"),
+    createdAt: 1,
+  };
+  vi.mocked(invoke).mockImplementationOnce(async (_command, args) => {
+    const { onPage } = args as { onPage: { id: string } };
+    const page = progressChannels.get(onPage.id);
+    expect(() => page?.({ entries: [null], partial: true })).not.toThrow();
+    page?.({ entries: [entry], partial: true });
+    return { entries: [entry], partial: false };
+  });
+  const pages: string[][] = [];
+  await expect(
+    transport.readAgentMemories?.(
+      agent.pubkey,
+      new AbortController().signal,
+      undefined,
+      (page) => pages.push(page.entries.map((e) => e.slug)),
+    ),
+  ).resolves.toEqual({ entries: [entry], partial: false });
+  expect(pages).toEqual([["mem/a"]]);
+});
+
 it("exposes purpose-bound agent readers and fences obsolete observer decoding", async () => {
   const transport = await connectNativeTransport(community);
   expect(transport.agentActivity).toBe(true);

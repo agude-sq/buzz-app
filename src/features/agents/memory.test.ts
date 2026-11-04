@@ -243,3 +243,81 @@ it("still forgets a live owner's listings on a switch after garbage collection",
   owner.dispose();
   stop();
 });
+
+/** A reader whose reads each wait for `settle` with an answer or a failure. */
+function settled() {
+  const reads: {
+    page?: ((page: MemoryListing) => void) | undefined;
+    resolve: (listing: MemoryListing) => void;
+    reject: (error: Error) => void;
+  }[] = [];
+  const read = vi.fn<MemoryReader>(
+    (_agent, _signal, _slug, onPage) =>
+      new Promise((resolve, reject) => {
+        reads.push({ page: onPage, resolve, reject });
+      }),
+  );
+  return { read, reads };
+}
+
+it("keeps a streamed page beside Retry when a later page fails, then recovers", async () => {
+  const { read, reads } = settled();
+  const owner = createAgentMemories(read, viewer, () => true);
+  const view = owner.capability.open(agent);
+  let done = view.refresh();
+  reads[0]?.page?.(listing("first"));
+  expect(slugs(view.snapshot())).toEqual(["first"]);
+  reads[0]?.reject(new Error("Memory read failed"));
+  await done;
+  expect(view.snapshot().status).toBe("error");
+  expect(slugs(view.snapshot())).toEqual(["first"]);
+  done = view.refresh();
+  expect(slugs(view.snapshot())).toEqual(["first"]);
+  reads[1]?.resolve(listing("first", "second"));
+  await done;
+  expect(view.snapshot().status).toBe("ready");
+  expect(slugs(view.snapshot())).toEqual(["first", "second"]);
+  view.dispose();
+});
+
+it("keeps a partial listing when its Retry fails, then recovers", async () => {
+  const { read, reads } = settled();
+  const owner = createAgentMemories(read, viewer, () => true);
+  const view = owner.capability.open(agent);
+  let done = view.refresh();
+  reads[0]?.resolve({ ...listing("first"), partial: true });
+  await done;
+  expect(view.snapshot().listing?.partial).toBe(true);
+  done = view.refresh();
+  reads[1]?.reject(new Error("Memory read failed"));
+  await done;
+  expect(view.snapshot().status).toBe("error");
+  expect(slugs(view.snapshot())).toEqual(["first"]);
+  done = view.refresh();
+  reads[2]?.resolve(listing("first", "second"));
+  await done;
+  expect(view.snapshot()).toMatchObject({ status: "ready" });
+  expect(view.snapshot().listing?.partial).toBe(false);
+  expect(slugs(view.snapshot())).toEqual(["first", "second"]);
+  view.dispose();
+});
+
+it("still clears shown entries when the read is denied or the session clears", async () => {
+  const { read, reads } = settled();
+  const owner = createAgentMemories(read, viewer, () => true);
+  const view = owner.capability.open(agent);
+  let done = view.refresh();
+  reads[0]?.page?.(listing("first"));
+  const denied = new Error("Memory read failed");
+  denied.name = "MemoryDenied";
+  reads[0]?.reject(denied);
+  await done;
+  expect(view.snapshot()).toEqual({ status: "denied" });
+  done = view.refresh();
+  reads[1]?.page?.(listing("first"));
+  owner.clear();
+  reads[1]?.reject(new Error("Memory read failed"));
+  await done;
+  expect(view.snapshot()).toEqual({ status: "idle" });
+  view.dispose();
+});

@@ -517,3 +517,29 @@ it("retries a partial listing while retaining its memories until recovery", asyn
     screen.queryByRole("button", { name: /Retry loading memories|Refresh/ }),
   ).toBeNull();
 });
+
+it("keeps shown memories beside the error when a later page fails, then recovers", async () => {
+  const user = userEvent.setup();
+  let calls = 0;
+  setup(async (_agent, _signal, _slug, onPage) => {
+    if (++calls === 1) {
+      onPage?.({ entries: [entry("mem/first", "One.")], partial: true });
+      throw new Error("HTTP 500");
+    }
+    return {
+      entries: [entry("mem/first", "One."), entry("mem/second", "Two.")],
+      partial: false,
+    };
+  });
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Memory couldn't be read.",
+  );
+  expect(screen.getByRole("button", { name: /first/ })).toBeInTheDocument();
+  await user.click(
+    screen.getByRole("button", { name: "Retry loading memories" }),
+  );
+  expect(
+    await screen.findByRole("button", { name: /second/ }),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
