@@ -210,9 +210,8 @@ that agent in Buzz; they do not notify the external app through this connection.
 - **Reminders**, in the desktop app when the plugin is on: choose **Remind me**
   in a sent message's ⋯ menu. A confirmation names the due time, and the message
   shows an alarm mark while the reminder is pending. In **Reminders**, a
-  reminder's due time snoozes it to a preset or **Custom…** date and time, and
-  **Cancel reminder** offers **Undo** for a few seconds. A reminder's note can't
-  be edited once set.
+  reminder's due time snoozes it to a preset or **Custom…** date and time. A
+  reminder's note can't be edited once set.
 - **Spoilers** stay hidden in reminder previews and notifications as `[Spoiler]`.
   Open the original message to reveal them.
 - **Canvas** holds shared notes and context for a channel or chat. Messages and

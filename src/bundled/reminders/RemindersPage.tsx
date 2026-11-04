@@ -62,7 +62,6 @@ import {
   PanelHeader,
   PanelHeaderLabel,
 } from "../../shared/design-system/ui/PanelHeader";
-import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import {
   TIME_PRESETS,
   dueDateLabel,
@@ -528,7 +527,6 @@ function ReminderRow({
   const id = useId();
   const [busy, setBusy] = useState(false);
   const [completing, setCompleting] = useState(false);
-  const notify = useToastNotification();
   const present = useIsPresent();
   useLayoutEffect(() => {
     // A newer relay event can win a successful write. Reset surviving rows,
@@ -727,34 +725,7 @@ function ReminderRow({
                   <MenuItem
                     tone="danger"
                     disabled={busy}
-                    onClick={() =>
-                      update(async () => {
-                        const due = reminder.notBefore;
-                        await reminders.cancel(reminder.id);
-                        // Snooze rewrites the cancelled reminder, note and
-                        // all, as pending at its old due time. The toast can
-                        // outlive this page, so a failure is a toast too.
-                        notify(
-                          "Reminder cancelled",
-                          "success",
-                          due === undefined
-                            ? undefined
-                            : {
-                                label: "Undo",
-                                onClick: () =>
-                                  void reminders
-                                    .snooze(reminder.id, due)
-                                    .catch(() =>
-                                      notify(
-                                        "Couldn't restore the reminder",
-                                        "error",
-                                      ),
-                                    ),
-                                timeout: 3000,
-                              },
-                        );
-                      })
-                    }
+                    onClick={() => update(() => reminders.cancel(reminder.id))}
                   >
                     <MenuIcon>
                       <XIcon size={16} />
