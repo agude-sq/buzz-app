@@ -1927,9 +1927,9 @@ Choosing the entry mounts `component` with `{ message, session, close, canOpen, 
 row, typically a dialog; it stays mounted until it calls `close()`. The optional
 `marker` receives `{ message, session }` and renders beside the timestamp, such as a
 state mark. A grouped message shows no byline, so its marks get a caption line of
-their own above the message; like the hidden byline, copying the row leaves them
-out. It renders only while `matches` passes, so hiding the menu entry also
-hides its mark. The host owns the menu, focus restoration and row lifetime: a row
+their own above the message, which takes no space while they render nothing; like
+the hidden byline, copying the row leaves them out. It renders only while
+`matches` passes, so hiding the menu entry also hides its mark. The host owns the menu, focus restoration and row lifetime: a row
 with an open action stays mounted while it scrolls out of view. Icon, component
 and marker failures each render nothing and leave the row and menu usable. The
 bundled Reminders plugin is the first consumer.

@@ -229,22 +229,34 @@ it("marks done, snoozes and cancels a pending reminder from its row", async () =
 
 it("snoozes to a custom future time, keeping the entry when the save fails", async () => {
   const user = userEvent.setup();
-  const state = {
+  let state = {
     status: "ready" as const,
     reminders: [reminder("due soon", "pending", 1, now + 600)],
   };
+  const listeners = new Set<() => void>();
+  const publish = (notBefore: number) => {
+    state = {
+      ...state,
+      reminders: [reminder("due soon", "pending", 1, notBefore)],
+    };
+    for (const listener of listeners) listener();
+  };
+  // Like the store, a write publishes its snapshot before it resolves.
   const snooze = vi
     .fn<Reminders["snooze"]>()
     .mockRejectedValueOnce(new Error("offline"))
-    .mockResolvedValue(undefined);
+    .mockImplementation(async (_id, notBefore) => publish(notBefore));
   page({
     snapshot: () => state,
-    subscribe: () => () => {},
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
     snooze,
   } as unknown as Reminders);
-  const trigger = within(screen.getByRole("listitem")).getByRole("button", {
-    name: "Snooze: Ada",
-  });
+  const trigger = within(
+    screen.getByRole("region", { name: "Today" }),
+  ).getByRole("button", { name: "Snooze: Ada" });
   await user.click(trigger);
   const items = await screen.findAllByRole("menuitem");
   expect(items.at(-1)).toHaveTextContent("Custom…");
@@ -264,6 +276,17 @@ it("snoozes to a custom future time, keeping the entry when the save fails", asy
   fireEvent.change(within(dialog).getByLabelText("Reminder time"), {
     target: { value: "16:15" },
   });
+  // Another device moves the reminder to Overdue, remounting its row.
+  act(() => publish(now - 60));
+  // The open dialog hides the page from the accessibility tree.
+  expect(
+    screen.getByRole("region", { name: "Overdue", hidden: true }),
+  ).toBeInTheDocument();
+  expect(dialog).toBeInTheDocument();
+  expect(within(dialog).getByLabelText("Reminder date")).toHaveValue(
+    "2099-06-20",
+  );
+  expect(within(dialog).getByLabelText("Reminder time")).toHaveValue("16:15");
   const at = new Date("2099-06-20T16:15").getTime() / 1000;
   await user.click(save);
   expect(snooze).toHaveBeenLastCalledWith("due soon", at);
@@ -275,7 +298,12 @@ it("snoozes to a custom future time, keeping the entry when the save fails", asy
   expect(snooze).toHaveBeenCalledTimes(2);
   expect(snooze).toHaveBeenLastCalledWith("due soon", at);
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-  await waitFor(() => expect(trigger).toHaveFocus());
+  // Focus returns to the trigger in the row Upcoming mounted for it.
+  const moved = within(
+    screen.getByRole("region", { name: "Upcoming" }),
+  ).getByRole("button", { name: "Snooze: Ada" });
+  expect(moved).not.toBe(trigger);
+  await waitFor(() => expect(moved).toHaveFocus());
 });
 
 it("offers Undo after Cancel, restoring the old due time", async () => {
@@ -304,6 +332,37 @@ it("offers Undo after Cancel, restoring the old due time", async () => {
     "due soon",
     now + 600,
   );
+});
+
+it("reports an Undo that cannot restore the reminder in a toast", async () => {
+  const user = userEvent.setup();
+  const state = {
+    status: "ready" as const,
+    reminders: [reminder("due soon", "pending", 1, now + 600)],
+  };
+  const reminders = {
+    snapshot: () => state,
+    subscribe: () => () => {},
+    cancel: vi.fn(() => Promise.resolve()),
+    snooze: vi.fn(() => Promise.reject(new Error("offline"))),
+  } as unknown as Reminders;
+  page(reminders, ToastProvider);
+  await user.click(screen.getByRole("button", { name: "More actions: Ada" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Cancel reminder" }),
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
+  expect(reminders.snooze).toHaveBeenCalledExactlyOnceWith(
+    "due soon",
+    now + 600,
+  );
+  // The toast, not the page, reports it: the page may be gone by now.
+  expect(
+    await screen.findByText("Couldn't restore the reminder"),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByText("The reminder could not be updated. Try again."),
+  ).toBeNull();
 });
 
 it("leaves a reminder cancelled once its Undo expires", async () => {

@@ -1033,9 +1033,12 @@ function MessageRowContent({
                 {!stackPrevious && markers}
               </div>
               {/* A continuation's byline is hidden, so its marks get their own
-                line; like that byline, a copy leaves them out. */}
+                line; like that byline, a copy leaves them out. A marker may
+                render nothing, so the line collapses while empty. */}
               {stackPrevious && markers?.some(Boolean) && (
-                <div className={`${styles.byline} select-none`}>{markers}</div>
+                <div className={`${styles.byline} ${styles.marks} select-none`}>
+                  {markers}
+                </div>
               )}
             </div>
             {row.sentFromThread && (

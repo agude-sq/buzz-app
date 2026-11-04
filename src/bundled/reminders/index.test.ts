@@ -189,13 +189,14 @@ it("labels a message's mark with its earliest pending due time", () => {
     );
   };
   const label = `Reminder set for ${formatDue(2_000_000_000)}`;
-  expect(
-    markup([
-      reminder("later", "pending", 2_100_000_000),
-      reminder("done", "done", 1_900_000_000),
-      reminder("sooner", "pending", 2_000_000_000),
-    ]),
-  ).toContain(`aria-label="${label}"`);
+  const marked = markup([
+    reminder("later", "pending", 2_100_000_000),
+    reminder("done", "done", 1_900_000_000),
+    reminder("sooner", "pending", 2_000_000_000),
+  ]);
+  expect(marked).toContain(`aria-label="${label}"`);
+  // Announced once: a title or hint would repeat the label as a description.
+  expect(marked).not.toMatch(/title=|tooltip-trigger/);
   // A due time Date cannot show still marks the message.
   expect(markup([reminder("far", "pending", 8_640_000_000_001)])).toContain(
     'aria-label="Reminder set"',

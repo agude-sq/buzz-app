@@ -295,6 +295,9 @@ function ReminderSections({
   const { channels } = useChannelList(session.channels);
   const profiles = useProfiles(session, authorIds);
   const name = useIdentityNames(session.names);
+  // Custom… outlives its row: a save, the clock or another device can move
+  // the reminder to another group, which mounts a new row.
+  const [snoozing, setSnoozing] = useState<Reminder>();
   const row = (reminder: Reminder) => {
     const target = reminder.target;
     const channel = target?.channelId
@@ -348,6 +351,7 @@ function ReminderSections({
         openConversation={
           open && target?.channelId ? () => open(reminder, true) : undefined
         }
+        chooseTime={() => setSnoozing(reminder)}
         run={run}
       />
     );
@@ -450,6 +454,27 @@ function ReminderSections({
           </AnimatePresence>
         </LayoutGroup>
       </motion.div>
+      {snoozing && (
+        <SnoozeDialog
+          title={
+            snoozing.status === "pending"
+              ? "Snooze reminder"
+              : "Remind me again"
+          }
+          due={snoozing.notBefore}
+          save={(notBefore) => reminders.snooze(snoozing.id, notBefore)}
+          close={() => setSnoozing(undefined)}
+          // The reminder's trigger in whichever row shows it now, not one
+          // leaving its old group.
+          finalFocus={() =>
+            Array.from(
+              sections.current?.querySelectorAll<HTMLElement>(
+                "li:not([inert]) [data-snooze]",
+              ) ?? [],
+            ).find((trigger) => trigger.dataset.snooze === snoozing.id) ?? null
+          }
+        />
+      )}
     </MotionConfig>
   );
 }
@@ -483,6 +508,7 @@ function ReminderRow({
   avatar,
   open,
   openConversation,
+  chooseTime,
   run,
 }: {
   ref?: Ref<HTMLLIElement>;
@@ -494,13 +520,12 @@ function ReminderRow({
   avatar: ReactElement;
   open: (() => void) | undefined;
   openConversation: (() => void) | undefined;
+  chooseTime(): void;
   run(action: Promise<unknown>): void;
 }) {
   const id = useId();
   const [busy, setBusy] = useState(false);
   const [completing, setCompleting] = useState(false);
-  const [choosing, setChoosing] = useState(false);
-  const snoozeTrigger = useRef<HTMLButtonElement>(null);
   const notify = useToastNotification();
   const present = useIsPresent();
   useLayoutEffect(() => {
@@ -632,7 +657,7 @@ function ReminderRow({
             <MenuTrigger
               render={
                 <Button
-                  ref={snoozeTrigger}
+                  data-snooze={reminder.id}
                   size="sm"
                   variant={overdue ? "attention" : "ghost"}
                   disabled={busy}
@@ -650,19 +675,11 @@ function ReminderRow({
                   <MenuNote>{dueDateLabel(reminder.notBefore, now)}</MenuNote>
                 )}
               {snoozeItems}
-              <MenuItem disabled={busy} onClick={() => setChoosing(true)}>
+              <MenuItem disabled={busy} onClick={chooseTime}>
                 Custom…
               </MenuItem>
             </MenuPopup>
           </MenuRoot>
-          {choosing && (
-            <SnoozeDialog
-              title={pending ? "Snooze reminder" : "Remind me again"}
-              save={(notBefore) => reminders.snooze(reminder.id, notBefore)}
-              close={() => setChoosing(false)}
-              finalFocus={snoozeTrigger}
-            />
-          )}
           {openConversation ? (
             <IconButton
               variant="avatar"
@@ -713,7 +730,8 @@ function ReminderRow({
                         const due = reminder.notBefore;
                         await reminders.cancel(reminder.id);
                         // Snooze rewrites the cancelled reminder, note and
-                        // all, as pending at its old due time.
+                        // all, as pending at its old due time. The toast can
+                        // outlive this page, so a failure is a toast too.
                         notify(
                           "Reminder cancelled",
                           "success",
@@ -722,7 +740,14 @@ function ReminderRow({
                             : {
                                 label: "Undo",
                                 onClick: () =>
-                                  run(reminders.snooze(reminder.id, due)),
+                                  void reminders
+                                    .snooze(reminder.id, due)
+                                    .catch(() =>
+                                      notify(
+                                        "Couldn't restore the reminder",
+                                        "error",
+                                      ),
+                                    ),
                                 timeout: 3000,
                               },
                         );

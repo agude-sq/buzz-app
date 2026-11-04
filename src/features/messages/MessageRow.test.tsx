@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { readFileSync } from "node:fs";
 import { StrictMode } from "react";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
@@ -33,6 +34,7 @@ import {
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageRow } from "./MessageRow";
+import styles from "./Messages.module.css";
 import { MessageManagement } from "./MessageManagement";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import type { UnreadCapability, UnreadSnapshot } from "../relay/unread";
@@ -2636,6 +2638,7 @@ it("contains a broken plugin message action to its own contribution", () => {
 });
 
 it("shows a plugin mark on a grouped message, once, outside its hidden byline", () => {
+  let marked = true;
   const action = {
     id: "mark",
     title: "Mark",
@@ -2644,7 +2647,8 @@ it("shows a plugin mark on a grouped message, once, outside its hidden byline", 
     revision: "one",
     matches: () => true,
     component: () => null,
-    marker: () => <span role="img" aria-label="Reminder set for later" />,
+    marker: () =>
+      marked ? <span role="img" aria-label="Reminder set for later" /> : null,
   };
   const actions = [action];
   const none: never[] = [];
@@ -2691,6 +2695,17 @@ it("shows a plugin mark on a grouped message, once, outside its hidden byline", 
     view.rerender(<MessageRow {...props} layout="timeline" />);
     expect(mark().closest(".sr-only")).toBeNull();
     expect(mark().parentElement?.querySelector("time")).not.toBeNull();
+    cleanup();
+    // A marker with nothing to show leaves an empty line, which collapses.
+    // jsdom applies no CSS, so the stylesheet's rule is read directly.
+    marked = false;
+    const { container } = renderDom(
+      <MessageRow {...props} layout="continuation" />,
+    );
+    expect(container.querySelector(`.${styles.marks}`)).toBeEmptyDOMElement();
+    expect(
+      readFileSync("src/features/messages/Messages.module.css", "utf8"),
+    ).toMatch(/\.marks:empty\s*\{\s*display:\s*none;\s*\}/);
   } finally {
     cleanup();
   }

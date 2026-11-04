@@ -5,7 +5,6 @@ import type { Reminder, Reminders } from "../../features/relay/reminders";
 import type { OpenTarget } from "../../features/navigation/targets";
 import { plainText } from "../../features/notifications/content";
 import { AlarmIcon } from "../../shared/design-system/icons/index";
-import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import {
   countDue,
   dueSince,
@@ -266,12 +265,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
       at !== undefined && isDisplayable(at)
         ? `Reminder set for ${formatDue(at)}`
         : "Reminder set";
+    // Labelled only: a title would repeat the label as its description.
     return (
-      <Tooltip content={label}>
-        <span className={styles.marker} role="img" aria-label={label}>
-          <AlarmIcon size={14} aria-hidden="true" />
-        </span>
-      </Tooltip>
+      <span className={styles.marker} role="img" aria-label={label}>
+        <AlarmIcon size={14} aria-hidden="true" />
+      </span>
     );
   }
 

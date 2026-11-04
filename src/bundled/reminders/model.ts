@@ -127,10 +127,19 @@ export const TIME_PRESETS: readonly TimePreset[] = [
   },
 ];
 
+const dateString = (date: Date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+
 /** Today as local `YYYY-MM-DD`, for the custom date input. */
-export function todayDateString() {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+export const todayDateString = () => dateString(new Date());
+
+/** A due time as custom date and time values, while that minute is still ahead. */
+export function dueInputs(at: number | undefined) {
+  if (at === undefined || !isDisplayable(at)) return undefined;
+  const due = new Date(at * 1000);
+  const date = dateString(due);
+  const time = due.toTimeString().slice(0, 5);
+  return parseCustomDateTime(date, time) === null ? undefined : { date, time };
 }
 
 /** A strictly future local date and time in unix seconds, or null. */

@@ -11,6 +11,7 @@ import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import {
   TIME_PRESETS,
+  dueInputs,
   formatDue,
   parseCustomDateTime,
   shiftedFrom,
@@ -204,21 +205,29 @@ function CustomTimeFields({
   );
 }
 
-/** Snooze's Custom…: moves a reminder to a date and time the person enters. */
+/**
+ * Snooze's Custom…: moves a reminder to a date and time the person enters,
+ * starting from its current due time while that is still ahead.
+ */
 export function SnoozeDialog({
   title,
+  due,
   save,
   close,
   finalFocus,
 }: {
   title: string;
+  due: number | undefined;
   save(notBefore: number): Promise<unknown>;
   close(): void;
-  finalFocus: RefObject<HTMLElement | null>;
+  finalFocus(): HTMLElement | null;
 }) {
   const fields = useRef<HTMLDivElement>(null);
-  const [date, setDate] = useState(todayDateString);
-  const [time, setTime] = useState("09:00");
+  const [start] = useState(
+    () => dueInputs(due) ?? { date: todayDateString(), time: "09:00" },
+  );
+  const [date, setDate] = useState(start.date);
+  const [time, setTime] = useState(start.time);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
   const custom = parseCustomDateTime(date, time);
