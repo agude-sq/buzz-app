@@ -225,6 +225,26 @@ export function createTab({
       </Button>
     );
   }
+  /** Shows a source's dialog on the Agents page, as its own visit there, so
+   * Back closes it and Forward reopens it. */
+  const openDialog = (provider: string, id: string) => {
+    const current = navigation.snapshot().entry.target;
+    const { route: _route, ...page } =
+      current.kind === "page" &&
+      current.pluginId === "buzz.agents" &&
+      current.pageId === "agents"
+        ? current
+        : ({
+            version: 1,
+            kind: "page",
+            pluginId: "buzz.agents",
+            pageId: "agents",
+          } as const);
+    void navigation.open({
+      ...page,
+      route: { version: 1, params: { attention: provider, dialog: id } },
+    });
+  };
   /** A recent event that was a message, shown as the conversation shows it. */
   function Message({
     entry,
@@ -645,8 +665,10 @@ export function createTab({
                   ),
                 ),
               )
-            : shown?.details
-              ? h(shown.details)
+            : shown?.details && watch.type === "source"
+              ? h(shown.details, {
+                  openDialog: (id: string) => openDialog(watch.provider, id),
+                })
               : h(
                   "p",
                   { className: "text-body-sm text-secondary" },

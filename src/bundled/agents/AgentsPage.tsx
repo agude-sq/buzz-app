@@ -10,6 +10,7 @@ import type {
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { AgentMessageButton } from "./AgentMessageButton";
 import { ProviderDialog } from "./ProviderDialog";
+import { ContributionBoundary } from "../../features/conversation/ContributionBoundary";
 // Agents, teams, and marketplace, with creation and import from their menus.
 import {
   useCallback,
@@ -108,6 +109,8 @@ import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import { readView, writeView } from "../../shared/view-state";
 import {
+  agentAttentionDialogRoute,
+  agentAttentionDialogTarget,
   agentProviderRoute,
   agentProviderTarget,
   agentRoute,
@@ -264,6 +267,37 @@ export function AgentsPage({
         target,
       );
     }
+  };
+  // An Attention source's dialog, such as whose GitHub feedback wakes
+  // agents: a visit of this page, apart from any one agent or watch.
+  const attentionRoute =
+    routed && navigation.target.kind === "page"
+      ? agentAttentionDialogRoute(navigation.target.route?.params)
+      : undefined;
+  const attentionDialog =
+    attentionRoute &&
+    agents.attentionDialog(attentionRoute.provider, attentionRoute.id);
+  const closeAttentionDialog = () => {
+    if (
+      !navigation ||
+      !navigator ||
+      !attentionRoute ||
+      navigation.signal.aborted ||
+      navigation.target.kind !== "page" ||
+      navigator.snapshot().entry.id !== navigation.entryId
+    )
+      return;
+    const target = agentAttentionDialogTarget(navigation.target);
+    const pageKey = targetKey(target);
+    navigator.dismiss((visit) => {
+      if (visit.kind !== "page") return false;
+      const shown = agentAttentionDialogRoute(visit.route?.params);
+      return (
+        shown?.provider === attentionRoute.provider &&
+        shown.id === attentionRoute.id &&
+        targetKey(agentAttentionDialogTarget(visit)) === pageKey
+      );
+    }, target);
   };
   const typeOf = (agent: Agent) =>
     types.find((type) => type.key === agent.type);
@@ -720,6 +754,26 @@ export function AgentsPage({
             build(agent.pubkey);
           }}
         />
+      )}
+      {attentionDialog && navigation && (
+        <Dialog
+          open
+          visit
+          onOpenChange={(open) => !open && closeAttentionDialog()}
+          headerGap="compact"
+          title={attentionDialog.title}
+          description={attentionDialog.description}
+        >
+          <ContributionBoundary
+            fallback={
+              <p role="alert" className="m-0 text-body-sm text-danger">
+                These controls are unavailable.
+              </p>
+            }
+          >
+            <attentionDialog.component visit={navigation.entryId} />
+          </ContributionBoundary>
+        </Dialog>
       )}
       {providerKey && (
         <ProviderDialog

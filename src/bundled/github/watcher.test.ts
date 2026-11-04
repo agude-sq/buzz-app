@@ -146,7 +146,7 @@ const asks = (app: ReturnType<typeof setup>, login: string) =>
 
 function setup(
   initial: Pull | null = answer(),
-  present?: AttentionSource["present"],
+  presentation?: Pick<AttentionSource, "present" | "dialogs">,
 ) {
   let gh = initial;
   let texts = true;
@@ -289,7 +289,7 @@ function setup(
     },
     effect: (fn: () => () => void) => disposers.push(fn()),
   } as unknown as Context;
-  watchPulls(ctx, states, github as unknown as GitHubCli, present);
+  watchPulls(ctx, states, github as unknown as GitHubCli, presentation);
   const tool = tools[0] as AddedTool;
   const call = (
     args: Record<string, unknown>,
@@ -358,14 +358,18 @@ describe("github_watch_pr", () => {
   });
   afterEach(() => vi.useRealTimers());
 
-  it("registers PR watching as an Attention source with its presenter", () => {
+  it("registers PR watching as an Attention source with its presenter and dialogs", () => {
     const present = vi.fn();
-    const app = setup(answer(), present);
+    const dialogs = [
+      { id: "authors", title: "Authors", component: () => null },
+    ];
+    const app = setup(answer(), { present, dialogs });
     expect(app.addAttentionSource).toHaveBeenCalledWith(
       expect.objectContaining({
         id: "github-pr",
         run: expect.any(Function),
         present,
+        dialogs,
       }),
     );
     app.dispose();

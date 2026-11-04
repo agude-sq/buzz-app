@@ -376,6 +376,7 @@ function setup(
     }),
     attentionProviders: () => [],
     presentWatch: () => undefined,
+    attentionDialog: () => undefined,
     addAttentionSource: vi.fn(),
     storage: localStore(),
     resumeInterrupted: vi.fn(),

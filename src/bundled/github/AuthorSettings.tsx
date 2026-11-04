@@ -6,15 +6,47 @@ import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { loadPolicy, open, parse, savePolicy, type Rule } from "./authors";
 
-/** Whose pull request comments and reviews wake agents watching it. */
-export function AuthorSettings() {
+type Draft = { text: string; fallback: Rule["effect"]; checked: boolean };
+/** The unsaved rules of the latest visit, kept while Back hides its dialog so
+ * Forward restores them; opening the editor again starts from what is saved. */
+let held: { visit: string; draft: Draft } | undefined;
+
+/** Whose pull request comments and reviews wake agents watching it. `visit`
+ * names the dialog's presentation, whose unsaved edits outlast it. */
+export function AuthorSettings({ visit }: { visit?: string }) {
   const [saved, setSaved] = useState(loadPolicy);
-  const [draft, setDraft] = useState(saved.text);
-  const [fallback, setFallback] = useState(saved.fallback);
+  const [kept] = useState(() =>
+    visit && held?.visit === visit ? held.draft : undefined,
+  );
+  const [draft, setDraftText] = useState(kept?.text ?? saved.text);
+  const [fallback, setFallbackEffect] = useState(
+    kept?.fallback ?? saved.fallback,
+  );
   /** Why the rules could not be saved, apart from why they are not rules. */
   const [error, setError] = useState("");
   // After a Save, each edit checks the rules again.
-  const [checked, setChecked] = useState(saved.error !== undefined);
+  const [checked, setCheckedState] = useState(
+    kept?.checked ?? saved.error !== undefined,
+  );
+  const hold = (next: Partial<Draft>) => {
+    if (visit)
+      held = {
+        visit,
+        draft: { text: draft, fallback, checked, ...next },
+      };
+  };
+  const setDraft = (text: string) => {
+    setDraftText(text);
+    hold({ text });
+  };
+  const setFallback = (effect: Rule["effect"]) => {
+    setFallbackEffect(effect);
+    hold({ fallback: effect });
+  };
+  const setChecked = (value: boolean) => {
+    setCheckedState(value);
+    hold({ checked: value });
+  };
   const parsed = parse(draft);
   const dirty =
     typeof parsed === "string" ||
@@ -31,9 +63,10 @@ export function AuthorSettings() {
         try {
           const policy = savePolicy(draft, fallback);
           setSaved(policy);
-          setDraft(policy.text);
-          setChecked(false);
+          setDraftText(policy.text);
+          setCheckedState(false);
           setError("");
+          if (held?.visit === visit) held = undefined;
         } catch (reason) {
           setError(reason instanceof Error ? reason.message : String(reason));
         }

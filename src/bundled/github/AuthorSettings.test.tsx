@@ -83,3 +83,28 @@ it("shows saved rules that no longer parse, with why, until they are fixed", asy
   expect(rules).toBeValid();
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
 });
+
+it("keeps a visit's unsaved rules for that visit until they are saved", async () => {
+  const user = userEvent.setup();
+  const first = render(<AuthorSettings visit="first" />);
+  const rules = () => screen.getByRole("textbox", { name: /Rules/ });
+  await user.clear(rules());
+  await user.type(rules(), "allow org:block");
+  await user.click(screen.getByRole("radio", { name: "Don’t wake it" }));
+  first.unmount();
+  // Forward restores the same visit.
+  const again = render(<AuthorSettings visit="first" />);
+  expect(rules()).toHaveValue("allow org:block");
+  expect(screen.getByRole("radio", { name: "Don’t wake it" })).toBeChecked();
+  again.unmount();
+  // Opening it again is another visit, from what is saved.
+  const fresh = render(<AuthorSettings visit="second" />);
+  expect(rules()).toHaveValue(DEFAULT_RULES);
+  fresh.unmount();
+  render(<AuthorSettings visit="first" />);
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  cleanup();
+  render(<AuthorSettings visit="first" />);
+  expect(rules()).toHaveValue("allow org:block");
+  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+});

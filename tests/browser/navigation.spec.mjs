@@ -115,6 +115,46 @@ providerTest(
   },
 );
 
+test("Agents Attention dialog Back keeps its draft for Forward; Close skips its visit", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const alpha = await entry(page);
+  await openPage(page, "Agents");
+  const agents = await entry(page);
+  const authors = {
+    ...agents.target,
+    route: {
+      version: 1,
+      params: { attention: "attention/github-pr", dialog: "authors" },
+    },
+  };
+  await page.evaluate((target) => {
+    location.hash = `#buzz=${encodeURIComponent(JSON.stringify(target))}`;
+  }, authors);
+  const dialog = page.getByRole("dialog", {
+    name: "GitHub comment authors",
+    exact: true,
+  });
+  const rules = dialog.getByRole("textbox", { name: /Rules/ });
+  await rules.fill("allow org:block");
+  await page.goBack();
+  await expect(dialog).toHaveCount(0);
+  expect(await entry(page)).toEqual(agents);
+  await page.goForward();
+  await expect(rules).toHaveValue("allow org:block");
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(await entry(page)).toEqual(agents);
+  await page.goBack();
+  await expect(composer(page, "Alpha")).toBeVisible();
+  expect(await entry(page)).toEqual(alpha);
+  await page.goForward();
+  await expect(button(page, "Go forward")).toBeDisabled();
+  await expect(dialog).toHaveCount(0);
+});
+
 // Native popstate/hashchange and modal focus are the integration boundary here;
 // identity matching and scope isolation are covered in the owner tests.
 test("Settings Back is reversible; explicit Close retires every section visit", async ({

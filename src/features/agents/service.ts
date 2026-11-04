@@ -1044,6 +1044,11 @@ export type Agents = {
     watch: import("./attention").SourceWatch,
     title: string,
   ): import("./attention-sources").SourcePresentation | undefined;
+  /** One of an active provider's dialogs. */
+  attentionDialog(
+    provider: string,
+    id: string,
+  ): import("./attention-sources").AttentionDialog | undefined;
   register<Config>(type: AgentType<Config>): void;
   types(): readonly RegisteredAgentType[];
   /** Adds a tab to the settings of every agent running on this device,
@@ -2355,6 +2360,11 @@ export class AgentsService extends Service implements Agents {
           : { configExample: JSON.parse(JSON.stringify(configExample)) }),
       };
     });
+  attentionDialog = (provider: string, id: string) =>
+    this.attentionSources
+      .snapshot()
+      .find((source) => this.attentionProvider(source) === provider)
+      ?.dialogs?.find((dialog) => dialog.id === id);
   presentWatch = (watch: import("./attention").SourceWatch, title: string) => {
     const source = this.attentionSources
       .snapshot()

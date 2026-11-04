@@ -2,9 +2,9 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { GitPullRequestIcon } from "../../shared/design-system/icons";
-import { presentPull } from "./attention";
+import { authorDialog, presentPull } from "./attention";
 import { DEFAULT_RULES } from "./authors";
 
 afterEach(() => {
@@ -20,7 +20,7 @@ const watch = (pr: unknown) => ({
   config: { pr },
 });
 
-it("names the pull request and edits whose feedback wakes agents in place", async () => {
+it("names the pull request and opens whose feedback wakes agents as a dialog", async () => {
   const user = userEvent.setup();
   const shown = presentPull(
     watch("https://github.com/block/buzz-app/pull/1578"),
@@ -37,17 +37,17 @@ it("names the pull request and edits whose feedback wakes agents in place", asyn
     },
   });
   const Details = shown.details as NonNullable<typeof shown.details>;
-  render(<Details />);
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  const openDialog = vi.fn();
+  render(<Details openDialog={openDialog} />);
   await user.click(
     screen.getByRole("button", { name: "Choose who can wake agents" }),
   );
-  const authors = await screen.findByRole("dialog", {
-    name: "GitHub comment authors",
-  });
-  expect(authors).toHaveAccessibleDescription(
-    "Agents watching a pull request are woken by CI, and by the comments and reviews these rules allow.",
-  );
+  expect(openDialog).toHaveBeenCalledWith(authorDialog.id);
+  // The editor is the source's dialog, not part of the watch's details.
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  cleanup();
+  const Editor = authorDialog.component;
+  render(<Editor visit="first" />);
   expect(screen.getByRole("textbox", { name: /Rules/ })).toHaveValue(
     DEFAULT_RULES,
   );

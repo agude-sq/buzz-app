@@ -1,35 +1,34 @@
 // How a pull request watch looks in Agent Attention.
-import { useState } from "react";
 import { GitPullRequestIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
-import { Dialog } from "../../shared/design-system/ui/Dialog";
-import type { AttentionSource } from "../../features/agents/attention-sources";
+import type {
+  AttentionDialog,
+  AttentionSource,
+} from "../../features/agents/attention-sources";
 import { AuthorSettings } from "./AuthorSettings";
 import { pullOf } from "./watch";
 
+/** Whose feedback wakes agents: one device-wide editor, whichever watch
+ * opened it. */
+export const authorDialog: AttentionDialog = {
+  id: "authors",
+  title: "GitHub comment authors",
+  description:
+    "Agents watching a pull request are woken by CI, and by the comments and reviews these rules allow.",
+  component: AuthorSettings,
+};
+
 /** Opens the rules for whose feedback wakes agents. */
-function Authors() {
-  const [open, setOpen] = useState(false);
+function Authors({ openDialog }: { openDialog(id: string): void }) {
   return (
-    <>
-      <Button
-        variant="link"
-        size="inline"
-        type="button"
-        onClick={() => setOpen(true)}
-      >
-        Choose who can wake agents
-      </Button>
-      <Dialog
-        open={open}
-        onOpenChange={setOpen}
-        headerGap="compact"
-        title="GitHub comment authors"
-        description="Agents watching a pull request are woken by CI, and by the comments and reviews these rules allow."
-      >
-        <AuthorSettings />
-      </Dialog>
-    </>
+    <Button
+      variant="link"
+      size="inline"
+      type="button"
+      onClick={() => openDialog(authorDialog.id)}
+    >
+      Choose who can wake agents
+    </Button>
   );
 }
 

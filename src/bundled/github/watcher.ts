@@ -92,7 +92,7 @@ export function watchPulls(
   ctx: Context,
   states: PullStates,
   gh: GitHubCli | undefined,
-  present?: AttentionSource["present"],
+  presentation: Pick<AttentionSource, "present" | "dialogs"> = {},
 ) {
   localStorage.removeItem(RETIRED_STORAGE_KEY);
   const cursors = load();
@@ -229,7 +229,7 @@ export function watchPulls(
     id: "github-pr",
     description: "Follow GitHub pull request feedback and CI",
     configExample: { pr: "https://github.com/OWNER/REPO/pull/NUMBER" },
-    ...(present && { present }),
+    ...presentation,
     async run({ id, agent, watch: source, signal, emit }) {
       const pull =
         typeof source.config.pr === "string"

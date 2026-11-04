@@ -68,15 +68,21 @@ test("The Attention tab fits both themes and sizes and manages existing watches 
   await expect(
     page.getByRole("link", { name: "Open project#42" }),
   ).toHaveAttribute("href", "https://github.com/example/project/pull/42");
-  const choose = page.getByRole("button", {
-    name: "Choose who can wake agents",
+  await page
+    .getByRole("button", { name: "Choose who can wake agents" })
+    .click();
+  // The Agents page shows it, as its own visit there.
+  expect(await page.evaluate(() => window.attentionFixture.opened)).toEqual({
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+    scope: null,
+    route: {
+      version: 1,
+      params: { attention: "attention/github-pr", dialog: "authors" },
+    },
   });
-  await choose.click();
-  const authors = page.getByRole("dialog", { name: "GitHub comment authors" });
-  await expect(authors.getByRole("textbox", { name: /Rules/ })).toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(authors).toHaveCount(0);
-  await expect(choose).toBeFocused();
 });
 
 // Browser focus after removal, including async writes, cannot be proved by jsdom.

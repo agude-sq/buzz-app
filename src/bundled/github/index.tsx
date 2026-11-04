@@ -47,7 +47,7 @@ import {
   SoloPullLauncher,
 } from "./SoloPull";
 import { watchPulls } from "./watcher";
-import { presentPull } from "./attention";
+import { authorDialog, presentPull } from "./attention";
 import { SubmitReview } from "./SubmitReview";
 
 /** How often an open pull request panel reads GitHub again. */
@@ -193,7 +193,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
   addPullStateTool(ctx.agents, states);
   // Agents can watch pull requests where the app runs them.
   ctx.inject(["agents", "host"], (scope) =>
-    watchPulls(scope, states, gh, presentPull),
+    watchPulls(scope, states, gh, {
+      present: presentPull,
+      dialogs: [authorDialog],
+    }),
   );
 };
 /** A repository, issue or commit, read when the panel opens. */

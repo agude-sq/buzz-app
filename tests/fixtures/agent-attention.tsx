@@ -140,6 +140,7 @@ const connection = {
 let saveGate: Promise<void> | undefined;
 const controls = {
   saveStarted: false,
+  opened: undefined as unknown,
   releaseSave: () => {},
   holdSave() {
     controls.saveStarted = false;
@@ -154,7 +155,19 @@ declare global {
   }
 }
 window.attentionFixture = controls;
-const navigation = { open: async () => {} };
+const agentsPage = {
+  version: 1,
+  kind: "page",
+  pluginId: "buzz.agents",
+  pageId: "agents",
+  scope: null,
+};
+const navigation = {
+  snapshot: () => ({ entry: { id: "agents", target: agentsPage } }),
+  open: async (target: unknown) => {
+    controls.opened = target;
+  },
+};
 const presentGitHub = presentPull;
 const Tab = createTab({
   agents: {

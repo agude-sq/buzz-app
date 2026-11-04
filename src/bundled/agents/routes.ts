@@ -34,8 +34,29 @@ export function agentRoute(value: JsonValue | undefined) {
     : undefined;
 }
 
+/** One of an Attention source's dialogs, as
+ * `{ attention: provider, dialog: id }`. */
+export function agentAttentionDialogRoute(value: JsonValue | undefined) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return;
+  const keys = Object.keys(value).sort();
+  const { attention, dialog } = value as Readonly<Record<string, JsonValue>>;
+  return keys.length === 2 &&
+    keys[0] === "attention" &&
+    keys[1] === "dialog" &&
+    typeof attention === "string" &&
+    providerKey.test(attention) &&
+    typeof dialog === "string" &&
+    /^[a-z0-9][a-z0-9._-]{0,127}$/.test(dialog)
+    ? { provider: attention, id: dialog }
+    : undefined;
+}
+
 export const availableAgentProviderRoute = (value: JsonValue) =>
-  Boolean(agentProviderRoute(value) ?? agentRoute(value));
+  Boolean(
+    agentProviderRoute(value) ??
+      agentRoute(value) ??
+      agentAttentionDialogRoute(value),
+  );
 
 /** The Agents page with `pubkey` open. */
 export const agentTarget = (pubkey: string) =>
@@ -54,6 +75,24 @@ export function agentProviderTarget(
   const { route: _route, ...page } = target;
   return provider
     ? { ...page, route: { version: 1, params: { provider } } }
+    : page;
+}
+
+/** The Agents page `target` showing an Attention source's dialog, or
+ * without one. */
+export function agentAttentionDialogTarget(
+  target: PageTarget,
+  dialog?: Readonly<{ provider: string; id: string }>,
+): PageTarget {
+  const { route: _route, ...page } = target;
+  return dialog
+    ? {
+        ...page,
+        route: {
+          version: 1,
+          params: { attention: dialog.provider, dialog: dialog.id },
+        },
+      }
     : page;
 }
 

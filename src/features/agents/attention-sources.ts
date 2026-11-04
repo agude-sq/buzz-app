@@ -16,8 +16,20 @@ export type SourcePresentation = Readonly<{
   subtitle?: string;
   /** Opens what it watches. */
   link?: Readonly<{ href: string; title: string }>;
-  /** Replaces the name in its details. */
-  details?: ComponentType;
+  /** Replaces the name in its details. `openDialog` shows one of the
+   * source's `dialogs`. */
+  details?: ComponentType<{ openDialog(id: string): void }>;
+}>;
+/** An editor a source's watches open from their details. The Agents page
+ * shows it as a dialog with its own place in navigation history, apart from
+ * any one watch. */
+export type AttentionDialog = Readonly<{
+  id: string;
+  title: string;
+  description?: string;
+  /** `visit` names this presentation: Forward restores the same one, and
+   * opening it again starts another. */
+  component: ComponentType<{ visit: string }>;
 }>;
 export type AttentionSource = Readonly<{
   id: string;
@@ -26,6 +38,7 @@ export type AttentionSource = Readonly<{
   configExample?: Readonly<Record<string, unknown>>;
   /** `title` is the watch's display name. */
   present?(watch: SourceWatch, title: string): SourcePresentation;
+  dialogs?: readonly AttentionDialog[];
   run(
     input: Readonly<{
       /** Stable Attention object slug, unique within the agent. */
