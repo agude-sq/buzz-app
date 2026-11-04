@@ -2,7 +2,7 @@ import { useConversationPresentation } from "../conversation/ConversationPresent
 import { prepareReviewEntrance } from "./use-review-entrance";
 import { useMediaCorners } from "./use-media-corners";
 import { MediaViewer } from "./MediaAttachment";
-import { ImageLoadError } from "./ImageLoadError";
+import { focusRetry, ImageLoadError } from "./ImageLoadError";
 import {
   imageFailed,
   imageLoaded,
@@ -29,8 +29,11 @@ export function AttachmentImage({
   onOpenLink,
   keepMounted,
   label = "Open image attachment",
+  name,
 }: {
   label?: string;
+  /** Names the image in its recovery when neighbors share a label, e.g. "image 2 of 4". */
+  name?: string | undefined;
   attachment: Attachment;
   session?: RelaySession | undefined;
   source: string | undefined;
@@ -79,28 +82,35 @@ export function AttachmentImage({
   // Pixels this view already shows outlast another view's failed request. The
   // "+N" tile stays the gallery link.
   const failed = !!load && !overlayCount && !decodedDimensions;
-  // Focus inside a failed frame moves to the image link that replaces it. The
-  // frame's ref is detached before its removal, while it still holds focus.
-  const refocus = useRef(false);
+  // Focus follows the frame's control across a failure and its recovery: the
+  // link while the image opens, Retry while it failed. React detaches a ref
+  // before this commit edits or removes its element, so each records focus
+  // while it still holds it; the frame's ref re-attaches when `failed` flips.
+  const handoff = useRef(false);
+  const keepFocus = useCallback(
+    (element: HTMLElement) => () => {
+      if (element.contains(document.activeElement)) handoff.current = true;
+    },
+    [],
+  );
   const frame = useCallback(
-    (element: HTMLSpanElement) => {
+    (element: HTMLAnchorElement) => {
       const release = corners(element);
+      const forget = keepFocus(element);
+      if (handoff.current) {
+        handoff.current = false;
+        const focused = document.activeElement;
+        if (focused === document.body || focused === element) {
+          if (failed) focusRetry(element);
+          else element.focus({ preventScroll: true });
+        }
+      }
       return () => {
-        refocus.current = element.contains(document.activeElement);
+        forget();
         release?.();
       };
     },
-    [corners],
-  );
-  const link = useCallback(
-    (element: HTMLAnchorElement | null) => {
-      if (element && refocus.current) {
-        refocus.current = false;
-        if (document.activeElement === document.body) element.focus();
-      }
-      return corners(element);
-    },
-    [corners],
+    [corners, keepFocus, failed],
   );
   const knownDimensions = decodedDimensions ?? imageDimensions(session, source);
   const dimensions = knownDimensions ?? attachment.dimensions;
@@ -150,76 +160,69 @@ export function AttachmentImage({
         <span>Image unavailable</span>
       </span>
     );
-  // Retargeting retires both the DOM pixels and all pending callbacks before
-  // the new source can paint. Session switches also remount the workspace.
-  const pixels = (
-    <span className={styles.attachmentImagePixels}>
-      {source && (
-        <ImagePixels
-          key={JSON.stringify([source, attachment.blurhash])}
-          source={source}
-          blurhash={attachment.blurhash}
-          paused={failed && load === "failed"}
-          onDecoded={onDecoded}
-        />
-      )}
-      {overlayCount > 0 && (
-        <span className={styles.imageOverflow} aria-hidden="true">
-          +{overlayCount}
-        </span>
-      )}
-    </span>
-  );
-  const outline = (
-    <svg
-      className={styles.imageOutline}
-      data-image-outline=""
-      aria-hidden="true"
-    >
-      <path />
-    </svg>
-  );
   return (
     <>
-      {failed && source ? (
-        <span
-          ref={frame}
-          className={styles.attachmentImage}
-          style={style}
-          data-image-failed=""
+      {/* A failure keeps this frame, its preview and its request in place.
+          Without href it is no link, so its Retry is not nested in one. */}
+      <a
+        ref={frame}
+        className={styles.attachmentImage}
+        style={style}
+        href={failed ? undefined : (source ?? attachment.url)}
+        target="_blank"
+        rel="noreferrer"
+        aria-label={failed ? undefined : label}
+        data-media-preview=""
+        data-image-ready={decodedDimensions ? true : undefined}
+        data-image-failed={failed ? "" : undefined}
+        onClick={
+          failed
+            ? undefined
+            : (event) => {
+                // Every activation stays in-app, modifiers included: the desktop
+                // opener treats an unprevented Ctrl/Shift or `_blank` click as browser
+                // intent, and no browser tab holds the app's credentials.
+                event.preventDefault();
+                prepareReviewEntrance(event);
+                if (onOpenReview) onOpenReview(attachment, 0);
+                else if (!onOpenLink?.(attachment.url)) setViewerOpen(true);
+              }
+        }
+      >
+        {/* Retargeting retires both the DOM pixels and all pending callbacks before
+            the new source can paint. Session switches also remount the workspace. */}
+        <span className={styles.attachmentImagePixels}>
+          {source && (
+            <ImagePixels
+              key={JSON.stringify([source, attachment.blurhash])}
+              source={source}
+              blurhash={attachment.blurhash}
+              paused={failed && load === "failed"}
+              onDecoded={onDecoded}
+            />
+          )}
+          {overlayCount > 0 && (
+            <span className={styles.imageOverflow} aria-hidden="true">
+              +{overlayCount}
+            </span>
+          )}
+        </span>
+        <svg
+          className={styles.imageOutline}
+          data-image-outline=""
+          aria-hidden="true"
         >
-          {pixels}
-          {outline}
+          <path />
+        </svg>
+        {failed && source && (
           <ImageLoadError
+            ref={keepFocus}
+            name={name}
             retrying={load === "retrying"}
             onRetry={() => retryImage(source)}
           />
-        </span>
-      ) : (
-        <a
-          ref={link}
-          className={styles.attachmentImage}
-          style={style}
-          href={source ?? attachment.url}
-          target="_blank"
-          rel="noreferrer"
-          aria-label={label}
-          data-media-preview=""
-          data-image-ready={decodedDimensions ? true : undefined}
-          onClick={(event) => {
-            // Every activation stays in-app, modifiers included: the desktop
-            // opener treats an unprevented Ctrl/Shift or `_blank` click as browser
-            // intent, and no browser tab holds the app's credentials.
-            event.preventDefault();
-            prepareReviewEntrance(event);
-            if (onOpenReview) onOpenReview(attachment, 0);
-            else if (!onOpenLink?.(attachment.url)) setViewerOpen(true);
-          }}
-        >
-          {pixels}
-          {outline}
-        </a>
-      )}
+        )}
+      </a>
       {active &&
         viewerOpen &&
         createPortal(

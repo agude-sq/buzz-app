@@ -136,9 +136,10 @@ it("a recovery from the viewer moves focus to the row image only from a Retry th
   recoverInViewer();
   expect(row().getByRole("link")).toHaveFocus();
 
+  // Lost focus belongs to the viewer whose Retry recovered the image.
   const retry = failRow();
   act(() => retry.blur());
   recoverInViewer();
   expect(row().getByRole("link")).not.toHaveFocus();
-  expect(document.body).toHaveFocus();
+  expect(viewerImage().parentElement).toHaveFocus();
 });

@@ -170,14 +170,18 @@ it("a failed original keeps its preview with a Retry that requests it again unti
     />,
   );
   const first = original(view);
+  const frame = first.closest("[data-media-preview]");
+  const preview = view.container.querySelector("canvas");
   fireEvent.error(first);
   expect(view.getByRole("status")).toHaveTextContent("Couldn't load image");
-  const frame = view.container.querySelector("[data-image-failed]");
+  // The frame, its preview and its image stay mounted; only the link goes.
+  expect(view.container.querySelector("[data-image-failed]")).toBe(frame);
   expect(frame).toHaveStyle({ width: "360px", aspectRatio: "1200 / 100" });
+  expect(frame).not.toHaveAttribute("href");
   expect(view.queryByRole("link")).not.toBeInTheDocument();
-  expect(view.container.querySelector("canvas")).toBeInTheDocument();
+  expect(view.container.querySelector("canvas")).toBe(preview);
   // The failed original is not requested again until Retry.
-  expect(original(view)).not.toBe(first);
+  expect(original(view)).toBe(first);
   expect(original(view)).not.toHaveAttribute("src");
 
   const retry = view.getByRole("button", { name: "Retry image" });
@@ -186,6 +190,7 @@ it("a failed original keeps its preview with a Retry that requests it again unti
   expect(view.getByRole("status")).toHaveTextContent("Loading image…");
   expect(retry).toHaveAttribute("aria-busy", "true");
   expect(retry).toHaveFocus();
+  expect(original(view)).toBe(first);
   expect(original(view)).toHaveAttribute("src", source);
   fireEvent.error(original(view));
   expect(view.getByRole("status")).toHaveTextContent("Couldn't load image");
@@ -195,11 +200,43 @@ it("a failed original keeps its preview with a Retry that requests it again unti
   fireEvent.click(retry);
   fireEvent.load(original(view));
   expect(view.queryByRole("status")).not.toBeInTheDocument();
-  // A focused Retry hands focus to the image it restored.
+  // A focused Retry hands focus to the image it restored, and the image that
+  // loaded is the one shown, not requested again.
+  expect(view.getByRole("link")).toBe(frame);
   expect(view.getByRole("link")).toHaveFocus();
+  expect(original(view)).toBe(first);
   expect(original(view)).toHaveAttribute("src", source);
+  expect(view.container.querySelector("canvas")).toBe(preview);
   await decode(view).release();
   expect(view.getByRole("link")).toHaveAttribute("data-image-ready");
+});
+
+it("a focused image that fails hands focus to its Retry", () => {
+  const view = render(
+    <AttachmentImage
+      attachment={{ url: source, kind: "image", dimensions }}
+      source={source}
+    />,
+  );
+  view.getByRole("link").focus();
+  fireEvent.error(original(view));
+  expect(view.getByRole("button", { name: "Retry image" })).toHaveFocus();
+
+  // Focus elsewhere stays where it is.
+  fireEvent.click(view.getByRole("button", { name: "Retry image" }));
+  fireEvent.load(original(view));
+  const outside = document.createElement("button");
+  document.body.append(outside);
+  outside.focus();
+  view.rerender(
+    <AttachmentImage
+      attachment={{ url: `${source}?v=2`, kind: "image", dimensions }}
+      source={`${source}?v=2`}
+    />,
+  );
+  fireEvent.error(original(view));
+  expect(outside).toHaveFocus();
+  outside.remove();
 });
 
 it("Retry never reaches an enclosing opener and ignores presses while pending", () => {
@@ -228,28 +265,34 @@ it("Retry never reaches an enclosing opener and ignores presses while pending", 
   expect(original(view)).toHaveAttribute("src", source);
 });
 
-it("offers a round Retry with its own name and hint for small frames", async () => {
-  const user = userEvent.setup();
-  const view = render(
-    <AttachmentImage
-      attachment={{ url: source, kind: "image", dimensions }}
-      source={source}
-    />,
-  );
-  fireEvent.error(original(view));
-  const compact = view.getByRole("button", {
-    name: "Couldn't load image. Retry",
-  });
-  expect(compact).toHaveAttribute("data-image-retry", "icon");
-  expect(view.getByRole("button", { name: "Retry image" })).toHaveAttribute(
-    "data-image-retry",
-    "label",
-  );
-  await user.hover(compact);
-  expect(await screen.findByRole("tooltip")).toHaveTextContent(
-    "Couldn't load image. Retry",
-  );
-});
+it.each([
+  [undefined, "image"],
+  ["image 2 of 4", "image 2 of 4"],
+])(
+  "offers a round Retry with its own name and hint for small frames: %s",
+  async (name, named) => {
+    const user = userEvent.setup();
+    const view = render(
+      <AttachmentImage
+        attachment={{ url: source, kind: "image", dimensions }}
+        source={source}
+        name={name}
+      />,
+    );
+    fireEvent.error(original(view));
+    const compact = view.getByRole("button", {
+      name: `Couldn't load ${named}. Retry`,
+    });
+    expect(compact).toHaveAttribute("data-image-retry", "icon");
+    expect(
+      view.getByRole("button", { name: `Retry ${named}` }),
+    ).toHaveAttribute("data-image-retry", "label");
+    await user.hover(compact);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      `Couldn't load ${named}. Retry`,
+    );
+  },
+);
 
 it("keeps the +N tile as the gallery link, and a new source after a failure loads normally", () => {
   const attachment = { url: source, kind: "image" as const, dimensions };

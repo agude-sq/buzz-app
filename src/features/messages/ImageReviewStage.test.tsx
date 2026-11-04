@@ -1028,6 +1028,32 @@ it("shows a failed image's error with Retry, disables zoom and hides image actio
   ).toBeInTheDocument();
 });
 
+it("moves focus a failure or recovery takes away to Retry or the stage", () => {
+  const { stage, image } = setup();
+  const zoomIn = screen.getByRole("button", { name: "Zoom in" });
+  zoomIn.focus();
+  fireEvent.error(image);
+  const retry = screen.getByRole("button", { name: "Retry image" });
+  expect(retry).toHaveFocus();
+
+  fireEvent.click(retry);
+  expect(retry).toHaveFocus();
+  fireEvent.error(stage.querySelector("img") as HTMLImageElement);
+  expect(retry).toHaveFocus();
+  fireEvent.click(retry);
+  fireEvent.load(stage.querySelector("img") as HTMLImageElement);
+  expect(retry).not.toBeInTheDocument();
+  expect(stage).toHaveFocus();
+
+  // Focus a failure leaves alone stays where it is.
+  const outside = document.createElement("button");
+  document.body.append(outside);
+  outside.focus();
+  fireEvent.error(stage.querySelector("img") as HTMLImageElement);
+  expect(outside).toHaveFocus();
+  outside.remove();
+});
+
 it("keeps gallery navigation around a failed image, and returning to it requests it again", () => {
   const attachments = [
     { url: "https://fixture.test/one.png", kind: "image" as const },
@@ -1048,6 +1074,12 @@ it("keeps gallery navigation around a failed image, and returning to it requests
   render(<Gallery />);
   fireEvent.error(screen.getByRole("img"));
   expect(screen.getByRole("status")).toHaveTextContent("Couldn't load image");
+  expect(
+    screen.getByRole("button", { name: "Retry image 1 of 2" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Couldn't load image 1 of 2. Retry" }),
+  ).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Next image" }));
   expect(screen.getByRole("img")).toHaveAttribute(
     "src",

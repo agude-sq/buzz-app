@@ -30,7 +30,7 @@ import styles from "./Messages.module.css";
 import { MediaDownloadAction } from "./MediaDownloadAction";
 import { copyImageToClipboard, supportsImageCopy } from "./image-copy";
 import { copyNativeImage } from "./native-image-copy";
-import { ImageLoadError } from "./ImageLoadError";
+import { focusRetry, ImageLoadError } from "./ImageLoadError";
 import {
   imageFailed,
   imageLoaded,
@@ -89,6 +89,24 @@ export function ImageReviewStage({
   const load = useImageLoad(source);
   // Only a loaded original can be zoomed, copied, downloaded or opened.
   const pixels = load ? undefined : source;
+  // Focus a failure or recovery took away, by removing or disabling its
+  // control, moves to what replaced it: Retry, or the stage once the image is
+  // back. Inside the modal, focus on the body is always such a loss.
+  const failure = !!load;
+  const shownFailure = useRef(failure);
+  useLayoutEffect(() => {
+    const element = stage.current;
+    if (shownFailure.current === failure || !element) return;
+    shownFailure.current = failure;
+    const focused = document.activeElement;
+    if (
+      focused !== document.body &&
+      !(element.contains(focused) && focused?.matches(":disabled"))
+    )
+      return;
+    if (failure) focusRetry(element);
+    else element.focus({ preventScroll: true });
+  }, [failure]);
   // A press that outlives its image must not zoom any later one, even when
   // navigation returns to the same source.
   useLayoutEffect(() => {
@@ -347,6 +365,11 @@ export function ImageReviewStage({
       })}
       {load && source && (
         <ImageLoadError
+          name={
+            attachments.length > 1
+              ? `image ${selectedIndex + 1} of ${attachments.length}`
+              : undefined
+          }
           retrying={load === "retrying"}
           onRetry={() => retryImage(source)}
         />

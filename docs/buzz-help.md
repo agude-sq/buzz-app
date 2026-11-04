@@ -210,7 +210,8 @@ that agent in Buzz; they do not notify the external app through this connection.
   to unblock Send; your typed message stays in the composer. Do not promise
   support for every file type or size. An image in a message or the viewer that
   can't load shows "Couldn't load image" and **Retry**; small images show a round
-  Retry button.
+  Retry button. In a group of images, screen readers hear which image each Retry
+  is for, such as "Retry image 2 of 4".
 - **Emoji suggestions** appear when you type `:` and an emoji name. If a name
   is shortened with an ellipsis, hover over it or use the arrow keys to select
   it and see the full name in a tooltip.

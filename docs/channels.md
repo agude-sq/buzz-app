@@ -1665,22 +1665,34 @@ per-mounted-image and uncached, visibility-gated even in nonvirtualized threads.
 Without IntersectionObserver, only the ordinary placeholder/original is used.
 This favors bounded visible work over instant offscreen previews on scrolling.
 An original that fails to load keeps its frame and preview under a dark scrim
-with "Couldn't load image" and Retry. That frame is no longer the viewer link; a
-"+N" tile stays the gallery link. Failed frames grow to at least 2.5rem so Retry
-fits, and the overlay's own size picks its layout in rem, so larger text steps
-down a layout: under 5.5rem wide or 4rem tall, a round Retry named and titled
-"Couldn't load image. Retry"; under 10rem by 6rem, icon and Retry with the
-sentence kept for screen readers; otherwise icon, sentence and Retry. Retry is
-busy until the fresh request settles and ignores repeated presses. Another failure
-returns to the error; success restores the link and moves a focused Retry's focus
-to it. The viewer shows the same recovery above its toolbar, disables zoom, and
-hides copy, download and open. Failures are shared by media source across mounted
-views, so Retry in a row or the viewer recovers both, while a view whose original
-already decoded keeps it. A failure is forgotten once no view of its source is
-mounted, so remounting requests the original again. Decode rejection is not a
-load failure. There is no automatic retry or cache-busting.
+with "Couldn't load image" and Retry. The frame element, its preview canvas and
+its image stay mounted; it only drops `href`, so it is no longer the viewer link
+and Retry is not nested in one, and the image Retry loads is the one shown, with
+no second request. A "+N" tile stays the gallery link. Failed frames grow to at
+least 2.5rem so Retry fits, and the overlay's own size picks its layout in rem, so
+larger text steps down a layout: under 5.5rem wide or 4rem tall, a round Retry
+named and titled "Couldn't load image. Retry"; under 10rem by 6rem, icon and
+Retry with the sentence kept for screen readers; otherwise icon, sentence and
+Retry. In a group, Retry names the image's position, e.g. "Retry image 2 of 4"
+and "Couldn't load image 2 of 4. Retry"; the viewer names the gallery position
+the same way. Retry is busy until the fresh request settles and ignores repeated
+presses. Another failure returns to the error; success restores the link. Focus
+follows the frame's control: a focused link that fails hands focus to Retry, and
+a focused Retry that succeeds hands it to the link. The viewer shows the same
+recovery above its toolbar, disables zoom, and hides copy, download and open; an
+image loading for Retry shares the recovery's grid area, so Retry keeps its place
+and focus while busy. Focus a viewer failure or recovery removes or disables
+moves to Retry or the stage, and closing the viewer over a row that failed
+meanwhile focuses that row's Retry. Failures are shared by media source across
+mounted views, so Retry in a row or the viewer recovers both, while a view whose
+original already decoded keeps it; the modal hides the row's status, so only the
+viewer announces. A failure is forgotten once no view of its source is mounted,
+so remounting requests the original again. Decode rejection is not a load
+failure. There is no automatic retry or cache-busting.
 `tests/browser/image-scroll.spec.mjs` covers delayed/failed loads, actual remounts,
-bottom following, reading anchors and narrow layout in Chromium and WebKit.
+bottom following, reading anchors and narrow layout in Chromium and WebKit;
+`tests/browser/image-failure.spec.mjs` covers Retry's success, focus and the
+viewer's layout while it is busy.
 
 ## Opening an exact message
 

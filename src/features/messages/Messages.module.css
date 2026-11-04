@@ -1624,15 +1624,20 @@ button.mediaPreview {
   }
 }
 /* A failed image's recovery takes the stage above the toolbar, so the toolbar
-   never covers Retry however it wraps. The toolbar keeps its place. */
+   never covers Retry however it wraps. The toolbar keeps its place, and an
+   image loading for Retry shares the recovery's area beneath it. */
 .imageReviewStage:has(> .imageLoadError) {
   display: grid;
   grid-template: minmax(0, 1fr) auto / minmax(0, 1fr);
+}
+.imageReviewStage > :is(img[data-review-media], .imageLoadError) {
+  grid-area: 1 / 1;
 }
 .imageReviewStage > .imageLoadError {
   position: relative;
 }
 .imageReviewStage > .imageLoadError ~ .imageReviewToolbar {
+  grid-area: 2 / 1;
   position: relative;
   left: auto;
   bottom: auto;
