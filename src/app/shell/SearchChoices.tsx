@@ -735,10 +735,7 @@ export function SearchChoices({
                                               </>
                                             )}
                                             {DetailIcon && (
-                                              <DetailIcon
-                                                size={16}
-                                                className="search-palette-detail-icon"
-                                              />
+                                              <DetailIcon className="search-palette-detail-icon" />
                                             )}
                                             <span className="truncate">
                                               {detail}
