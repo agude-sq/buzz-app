@@ -46,14 +46,14 @@ afterEach(() => {
 it("sends a legacy sign-in itself, and names an FI session by its revision", async () => {
   tauri.isTauri.mockReturnValue(true);
   const legacy = credential("legacy-secret");
-  vi.stubEnv("VITE_BUZZ_FEDERATED_IDENTITY", "0");
   await nativeBuilderlabDecide()?.(request, legacy);
   expect(tauri.invoke).toHaveBeenLastCalledWith("decide", {
     backend: "builderlab",
     request,
     session: "legacy-secret",
   });
-  vi.stubEnv("VITE_BUZZ_FEDERATED_IDENTITY", "1");
+  // The session in use decides, not the build: the built-in server's
+  // sign-in can be either.
   const federated = { account: legacy.account, revision: "fi-revision" };
   await nativeBuilderlabDecide()?.(request, federated);
   expect(tauri.invoke).toHaveBeenLastCalledWith("decide", {
@@ -125,9 +125,18 @@ it("signs out only the sign-in Builderlab refused", async () => {
 });
 
 it("never ends an FI session for a decisions 401", async () => {
-  vi.stubEnv("VITE_BUZZ_FEDERATED_IDENTITY", "1");
-  const session = createOAuthSession(async () => credential("first"));
-  await session.signIn();
+  const signOut = vi.fn();
+  const fi = {
+    revision: "fi-revision",
+    storage: "",
+    account: credential("x").account,
+  };
+  const session = {
+    snapshot: () => ({ status: "signed-in", account: fi.account }),
+    subscribe: () => () => {},
+    credential: () => fi,
+    signOut,
+  } as unknown as BuilderlabSession;
   const provider = builderlabProvider(session, true, async () => ({
     outcome: "failed",
     backend: "builderlab",
@@ -137,7 +146,7 @@ it("never ends an FI session for a decisions 401", async () => {
     outcome: "failed",
     reason: "unauthorized",
   });
-  expect(session.snapshot().status).toBe("signed-in");
+  expect(signOut).not.toHaveBeenCalled();
 });
 
 it("keeps the shared sign-in when only decisions are refused", async () => {
@@ -249,7 +258,7 @@ it("offers Builderlab only while the signed-in account may use decisions", async
   expect(decide).not.toHaveBeenCalled();
 });
 
-it("follows the sign-in in use: the browser's answers, a NIP-FI session withdraws it", async () => {
+it("follows the sign-in in use: the browser's credential, then the NIP-FI session's revision", async () => {
   const root = new Context();
   root.provide("pluginStatus", {
     isActive: () => true,
@@ -265,7 +274,11 @@ it("follows the sign-in in use: the browser's answers, a NIP-FI session withdraw
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    credential: () => ({ account: credential("x").account }),
+    credential: () => ({
+      revision: "fi-revision",
+      storage: "",
+      account: credential("x").account,
+    }),
     dispose() {},
   } as unknown as BuilderlabSession;
   const setNative = (next: LoginSnapshot) => {
@@ -300,16 +313,21 @@ it("follows the sign-in in use: the browser's answers, a NIP-FI session withdraw
   await expect(provider.decide(request, { signal })).resolves.toMatchObject({
     outcome: "answered",
   });
-  expect(decide).toHaveBeenLastCalledWith(request, "browser");
-  // A community's NIP-FI sign-in takes over: native sends only a browser
-  // credential, so Decisions is withdrawn rather than sent without one.
+  expect(decide).toHaveBeenLastCalledWith(
+    request,
+    expect.objectContaining({ value: "browser" }),
+  );
+  // A community's NIP-FI sign-in takes over: Decisions stays, and native is
+  // handed that session's credential, never the retired browser one.
   setNative({ status: "signed-in", account: credential("x").account });
-  expect(keys()).toEqual([]);
-  await expect(provider.decide(request, { signal })).resolves.toEqual({
-    outcome: "failed",
-    reason: "missing_credentials",
+  expect(keys()).toEqual(["block.builderlab/builderlab"]);
+  await expect(provider.decide(request, { signal })).resolves.toMatchObject({
+    outcome: "answered",
   });
-  expect(decide).toHaveBeenCalledTimes(1);
+  expect(decide).toHaveBeenLastCalledWith(
+    request,
+    expect.objectContaining({ revision: "fi-revision" }),
+  );
   // Taking over retired the browser sign-in, so it does not come back.
   setNative({ status: "signed-out" });
   expect(browser.snapshot().status).toBe("signed-out");

@@ -1,7 +1,8 @@
 // Builderlab as a decision provider: the user's Builderlab sign-in, which
-// native code sends with each call (in an FI build, the native session, named
-// by its revision; its token never leaves native). It is offered only while that sign-in's
-// account may use decisions; see `offerBuilderlabDecisions`. Settings >
+// native code sends with each call. A NIP-FI session, in an FI build or when
+// the built-in server offers it, is named by its revision; its token never
+// leaves native. It is offered only while that sign-in's account may use
+// decisions; see `offerBuilderlabDecisions`. Settings >
 // Decisions API shows the same sign-in control as this plugin's card while it
 // is selected.
 import type { Context } from "@deepseek-ai/cordis";
@@ -12,11 +13,7 @@ import type {
   DecisionReply,
 } from "../../features/decisions/service";
 import { Login } from "./login/Login";
-import {
-  nativeBuilderlab,
-  type BuilderlabSession,
-  type Credential,
-} from "./session";
+import type { BuilderlabSession, Credential } from "./session";
 
 /** Native `decide` on Builderlab, as the sign-in `credential`. */
 export type BuilderlabDecide = (
@@ -25,17 +22,23 @@ export type BuilderlabDecide = (
 ) => Promise<unknown>;
 const field = (credential: Credential, name: "value" | "revision") => {
   const value = (credential as Record<string, unknown>)[name];
-  return typeof value === "string" ? value : "";
+  return typeof value === "string" ? value : undefined;
 };
+/** Whether `credential` is a NIP-FI session's, which carries only its public
+ * revision, rather than a browser sign-in's value. The session in use
+ * decides, not the build: the built-in server's can be either. */
+const federated = (credential: Credential) =>
+  field(credential, "value") === undefined &&
+  field(credential, "revision") !== undefined;
 export const nativeBuilderlabDecide = (): BuilderlabDecide | undefined =>
   isTauri()
     ? (request, credential) =>
         invoke("decide", {
           backend: "builderlab",
           request,
-          ...(nativeBuilderlab()
+          ...(federated(credential)
             ? { federated: field(credential, "revision") }
-            : { session: field(credential, "value") }),
+            : { session: field(credential, "value") ?? "" }),
         })
     : undefined;
 
@@ -61,11 +64,8 @@ export function offerBuilderlabDecisions(
   let withdraw: (() => void) | undefined;
   const update = () => {
     const state = session.snapshot();
-    // Native sends only the browser sign-in's credential; a NIP-FI session
-    // offers no decisions, as in a build that adds a server.
     const allowed =
       state.status === "signed-in" &&
-      !state.federated &&
       state.account?.canUseBuilderlabDecisions === true;
     if (allowed && !withdraw)
       withdraw = ctx.decisions.registerProvider(provider);
@@ -88,7 +88,7 @@ export function builderlabProvider(
   openIdentity?: () => void,
 ): DecisionProvider {
   const signedIn = () =>
-    session.snapshot().status === "signed-in" && !session.snapshot().federated
+    session.snapshot().status === "signed-in"
       ? session.credential()
       : undefined;
   // Builderlab reports at sign-in whether this account may use decisions.
@@ -138,12 +138,13 @@ export function builderlabProvider(
       >;
       // Native reports `session_expired` only for a legacy sign-in's
       // Builderlab 401. Then only the refused sign-in ends; a newer one
-      // stays. An FI build never ends its session here: signing out would
-      // end the whole FI session, and native asks the adapter instead. A
+      // stays. A NIP-FI session never ends here: signing out would end the
+      // whole session, and native asks the adapter instead. A
       // refusal of decisions alone (`unauthorized`) keeps the sign-in that
       // other Builderlab features share.
       if (reason === "session_expired") {
-        if (!nativeBuilderlab() && signedIn() === credential) session.signOut();
+        if (!federated(credential) && signedIn() === credential)
+          session.signOut();
         return { outcome: "failed", reason: "unauthorized" };
       }
       // The host checks the reply's shape and answers.
