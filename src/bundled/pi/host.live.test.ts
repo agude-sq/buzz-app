@@ -37,12 +37,12 @@ const originalOpen = Harness.open;
 let openedHarness;
 Harness.open = async (...args) => {
   openedHarness = await originalOpen(...args);
-  // Reads of a request's status are slow, so commits pile up behind them.
+  // While \`statusGate\` is set, reads of a request's status wait for it.
   const submission = openedHarness.submission.bind(openedHarness);
   openedHarness.submission = async (...ids) => {
     const found = await submission(...ids);
     return found && new Proxy(found, { get: (target, key) => key === "status"
-      ? async (...rest) => { await new Promise((resolve) => setTimeout(resolve, 30)); return target.status(...rest); }
+      ? async (...rest) => { const gate = statusGate; if (gate) { gate.entered.release(); await gate.gate; } return target.status(...rest); }
       : typeof target[key] === "function" ? target[key].bind(target) : target[key] });
   };
   return openedHarness;
@@ -70,7 +70,7 @@ const tools = [
   { name: "watch_add", description: "Watch for events", inputSchema: { type: "object" }, load: "search" },
 ];
 const out = {};
-let blockTools = false, rewriteTools = false, rewriteCommand = false;
+let blockTools = false, rewriteTools = false, rewriteCommand = false, statusGate;
 function start(prompt = async () => undefined) {
   const input = new PassThrough(), output = new PassThrough();
   const events = [], tools = [], pending = new Map();
@@ -211,13 +211,23 @@ await new Promise((resolve) => { const check = () => pi.events.some((event) => e
 await pi.rpc("session", { agent, key: "chan/root", action: "interrupt" });
 out.toolStop = { step: pi.events.find((event) => event.type === "step" && event.tool === "bash"), wait: await pi.rpc("wait", { agent, submission: t1.submission }), last: (await pi.rpc("entries", { agent, conversation: t1.conversation })).entries[0] };
 // A step shows the command as it runs, after the hooks, and the calls a
-// tool makes through Pi.
+// tool makes through Pi. The read for the request's placed event is held
+// until the run answers, so every commit of its tools lands meanwhile.
 rewriteCommand = true;
-faux.setResponses([() => fauxAssistantMessage([fauxToolCall("bash", { command: "printf original" }), fauxToolCall("nest", {})], { stopReason: "toolUse" }), () => fauxAssistantMessage("Ran them")]);
+statusGate = { ...held(), entered: held() };
+const answering = held();
+faux.setResponses([() => fauxAssistantMessage([fauxToolCall("bash", { command: "printf original" }), fauxToolCall("nest", {})], { stopReason: "toolUse" }), () => { answering.release(); return fauxAssistantMessage("Ran them"); }]);
 const ranFrom = pi.events.length;
 const ran = await pi.rpc("deliver", turn("R", "run"));
+try {
+  await statusGate.entered.gate;
+  await answering.gate;
+} finally {
+  statusGate.release();
+  statusGate = undefined;
+}
+// A wait answers once its run's events went out, and they arrive first.
 out.ran = { wait: await pi.rpc("wait", { agent, submission: ran.submission }) };
-await new Promise((resolve) => setTimeout(resolve, 100));
 out.ran.events = pi.events.slice(ranFrom).filter((event) => event.type === "placed" || (event.type === "step" && ["bash", "nest"].includes(event.tool))).map(({ type, tool, target, request }) => ({ type, ...(tool ? { tool } : {}), ...(target ? { target } : {}), ...(request ? { request } : {}) }));
 rewriteCommand = false;
 // Past what Pi keeps verbatim, so compacting summarizes the older turn.
