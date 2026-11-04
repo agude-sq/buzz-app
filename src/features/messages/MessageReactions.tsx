@@ -27,6 +27,7 @@ import type { CustomEmoji } from "../relay/emoji";
 import type { RelaySession } from "../relay/session";
 import type { OutgoingEvent } from "../relay/outbox";
 import { selectProfiles } from "../relay/profile-selection";
+import { useChannelIdentityNames } from "../identity-names/react";
 import styles from "./Messages.module.css";
 import { isUnicodeEmojiOnly } from "./emoji-size";
 
@@ -175,6 +176,7 @@ function ReactionPreviewContent({
   authorIds,
   session,
   profiles,
+  resolveName,
   name,
   previewTilt,
   peopleList,
@@ -185,6 +187,7 @@ function ReactionPreviewContent({
   authorIds: string[];
   session: RelaySession;
   profiles: ReadonlyMap<string, Profile> | undefined;
+  resolveName(pubkey: string, fallback: string): string;
   name: string;
   previewTilt: string;
   peopleList: RefObject<HTMLElement | null>;
@@ -208,9 +211,12 @@ function ReactionPreviewContent({
   const users = previewAuthors.map((authorId) =>
     authorId === session.viewer
       ? "You"
-      : (loadedReactors.get(authorId)?.name ??
-        profiles?.get(authorId)?.name ??
-        authorId.slice(0, 10)),
+      : resolveName(
+          authorId,
+          loadedReactors.get(authorId)?.name ??
+            profiles?.get(authorId)?.name ??
+            authorId.slice(0, 10),
+        ),
   );
   // Opening enriches a small first page, never pointer transit across a pill.
   useEffect(() => {
@@ -293,6 +299,7 @@ function ReactionEmoji({
   mine,
   session,
   profiles,
+  resolveName,
   disabled,
   unavailable,
   toggle,
@@ -307,6 +314,7 @@ function ReactionEmoji({
   mine: boolean;
   session: RelaySession;
   profiles?: ReadonlyMap<string, Profile> | undefined;
+  resolveName(pubkey: string, fallback: string): string;
   disabled: boolean;
   unavailable: boolean;
   toggle(content: string, emoji?: CustomEmoji): boolean;
@@ -339,9 +347,12 @@ function ReactionEmoji({
   const user =
     authorId === session.viewer
       ? "You"
-      : (loadedLabel.get(authorId)?.name ??
-        profiles?.get(authorId)?.name ??
-        authorId.slice(0, 10));
+      : resolveName(
+          authorId,
+          loadedLabel.get(authorId)?.name ??
+            profiles?.get(authorId)?.name ??
+            authorId.slice(0, 10),
+        );
   const revealName = () => {
     if (reaction.emoji) return;
     void import("./reaction-name").then(({ reactionName }) =>
@@ -423,6 +434,7 @@ function ReactionEmoji({
           authorIds={authorIds}
           session={session}
           profiles={profiles}
+          resolveName={resolveName}
           name={name}
           previewTilt={previewTilt}
           peopleList={peopleList}
@@ -444,6 +456,7 @@ export function MessageReactions(
   const active = useConversationPresentation();
   const { row, session, scope, tools } = props;
   const action = useReactionAction(props);
+  const resolveName = useChannelIdentityNames(session, row.channelId);
   const catalog = useSyncExternalStore(
     session.emoji.subscribe,
     session.emoji.snapshot,
@@ -506,6 +519,7 @@ export function MessageReactions(
               mine={mine}
               session={session}
               profiles={props.profiles}
+              resolveName={resolveName}
               disabled={props.disabled}
               unavailable={action.disabled}
               toggle={action.toggle}

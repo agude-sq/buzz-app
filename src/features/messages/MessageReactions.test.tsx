@@ -32,6 +32,9 @@ import type {
 } from "../conversation/contracts";
 import { PublishRejected } from "../relay/outbox";
 import { useSyncExternalStore } from "react";
+import { createNameProvider } from "../identity-names/directory";
+import { resolveIdentityNames } from "../identity-names/policy";
+import { bindNames, type IdentityNames } from "../identity-names/service";
 
 const viewer = keypair(),
   other = keypair(),
@@ -99,6 +102,7 @@ function harness(
   publish = vi.fn(async (_event: RelayEvent) => {}),
   pickerTools = tools,
   media?: (url: string, size?: "small") => string | undefined,
+  identityNames?: IdentityNames,
 ) {
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   let live!: LiveCallbacks;
@@ -112,7 +116,7 @@ function harness(
         return { update() {}, retry() {}, dispose() {} };
       },
     },
-    { outboxStorage: { load: () => [], save() {} } },
+    { outboxStorage: { load: () => [], save() {} }, identityNames },
   );
   owners.push(owner);
   owner.session.channels.ensure("c");
@@ -196,6 +200,36 @@ it("shows one bubble per emoji, counts unique people, and removes all my duplica
     await flush();
     await flush();
   });
+});
+it("names reactors with the active naming policy, as message bylines do", async () => {
+  const provider = createNameProvider({
+    id: "full",
+    resolve: (identities, viewer, candidates) =>
+      resolveIdentityNames(
+        identities.map((row) => ({ ...row, name: `${row.name} (full)` })),
+        viewer,
+        candidates,
+      ),
+  });
+  const h = harness(
+    [profile(other, { name: "sandro" }), react(other)],
+    undefined,
+    tools,
+    undefined,
+    {
+      bind: (source) =>
+        bindNames(source, {
+          snapshot: () => [provider],
+          subscribe: () => () => {},
+        }),
+      register() {},
+    },
+  );
+  render(<h.Controls />);
+  const pill = await screen.findByRole("button", { name: "👍: sandro (full)" });
+  act(() => pill.focus());
+  const preview = await screen.findByRole("tooltip");
+  expect(preview.textContent).toContain("sandro (full)");
 });
 it("keeps one bubble and focus when the count crosses the former grouping threshold", async () => {
   const others = Array.from({ length: 8 }, () => keypair());
