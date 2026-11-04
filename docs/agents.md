@@ -237,7 +237,9 @@ successful read, or when the agent calls it with `stop: true`.
 
 GitHub comment authors rules decide whose feedback wakes agents, since anyone
 can comment on a public pull request. Choose who can wake agents, in a GitHub PR
-watch's details in Agent Attention, opens them. They are saved on the device,
+watch's details in Agent Attention, opens them in a dialog on the Agents page:
+Back closes it, keeping unsaved edits for Forward, and removing the watch does
+not close it. They are saved on the device,
 one per line. Each starts with `allow` or `deny`, followed by any
 of these conditions, all of which must hold:
 
@@ -262,7 +264,8 @@ When no rule matches decides the rest: Wake the agent or Don't wake it.
 Saving compiles every pattern and rejects the rules, naming the line, when one
 is not a rule, or when they name more organizations than one membership read
 can ask about. Saved rules that no longer parse, such as a pattern with
-lookaround an earlier build accepted, stay in Settings with their error, and
+lookaround an earlier build accepted, stay in the GitHub comment authors dialog
+with their error, and
 hold all feedback until they are fixed rather than falling back to the defaults. The defaults keep the behavior from before rules: agents'
 comments wake nobody, and everyone else's wake the agent.
 

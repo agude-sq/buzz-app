@@ -3,8 +3,8 @@
 // one per line, allow or deny feedback; the first that matches decides, and
 // the fallback decides feedback none matches. The defaults admit everyone but
 // agents' own comments, as before rules existed. Saved on this device and
-// edited in Settings; each poll reads them again, so a change applies to
-// running watches.
+// edited from a GitHub PR watch in Agent Attention; each poll reads them
+// again, so a change applies to running watches.
 import { Pattern } from "./pattern";
 import { BODY_CHARS, type Feedback } from "./pull-states";
 
