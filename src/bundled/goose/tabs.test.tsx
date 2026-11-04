@@ -680,7 +680,7 @@ const GANDER = "c".repeat(64);
 
 /** goose's history with sessions Gander ran in #general's thread, each
  * sending `Hi from goose` (s1) or `Hi from <id>`. */
-function gooseHistory(ids: readonly string[] = ["s1"]) {
+function gooseHistory(ids: readonly string[] = ["s1"], page?: number) {
   const context = [
     "<context>",
     "Scope: thread",
@@ -696,6 +696,7 @@ function gooseHistory(ids: readonly string[] = ["s1"]) {
   ].join("\n");
   return fakeSpawn({
     home: "/home/test",
+    ...(page ? { page } : {}),
     history: ids.map((sessionId) => ({
       sessionId,
       title: `Gander · #general · ${sessionId}`,
@@ -1002,6 +1003,84 @@ it("shows each session's channel and time without asking goose, and drops one go
     ]),
   );
   expect(keyword(fake)).toEqual([]);
+});
+
+it("finds an older session's title on a later page of goose's listing, then stops", async () => {
+  const fake = gooseHistory(["a", "b", "old", "c"], 2);
+  activity(fake, { saved: [], ids: ["old"] });
+  expect(
+    await screen.findByRole("button", {
+      name: "View transcript: #general · old",
+    }),
+  ).toBeInTheDocument();
+  expect(searches(fake)).toHaveLength(2);
+  expect(keyword(fake)).toEqual([]);
+  expect(
+    fake.geese
+      .flatMap((goose) => goose.received)
+      .filter((message) => message.method === "_goose/unstable/session/export"),
+  ).toEqual([]);
+});
+
+it("keeps local rows while older sessions load, and offers Retry when listing them fails", async () => {
+  const at = Date.parse("2027-01-15T08:00:00Z");
+  let settle!: { resolve(rows: unknown): void; reject(error: Error): void };
+  const listed = vi.fn(
+    () =>
+      new Promise((resolve, reject) => {
+        settle = { resolve, reject };
+      }),
+  );
+  const history = { listed } as unknown as GooseHistory;
+  activity(
+    gooseHistory(),
+    {
+      saved: [],
+      ids: ["old", { id: "new", at, title: "Gander · #general" }],
+    },
+    history,
+  );
+  const rows = () =>
+    screen
+      .getAllByRole("listitem")
+      .map((item) =>
+        within(item).getByRole("button").getAttribute("aria-label"),
+      );
+  expect(rows()).toEqual(["View transcript: #general"]);
+  expect(screen.getByText("Loading older sessions…")).toBeInTheDocument();
+  expect(screen.queryByText(/^None\./)).toBeNull();
+  act(() => settle.reject(new Error("goose is unavailable")));
+  expect(
+    await screen.findByText(
+      "Could not list older goose sessions: goose is unavailable",
+    ),
+  ).toBeInTheDocument();
+  expect(rows()).toEqual(["View transcript: #general"]);
+  await userEvent.setup().click(screen.getByRole("button", { name: "Retry" }));
+  expect(listed).toHaveBeenCalledTimes(2);
+  act(() =>
+    settle.resolve(
+      new Map([
+        ["old", { sessionId: "old", title: "Gander · #ops", at: at - 1 }],
+      ]),
+    ),
+  );
+  await waitFor(() =>
+    expect(rows()).toEqual([
+      "View transcript: #general",
+      "View transcript: #ops",
+    ]),
+  );
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("never says None while older sessions are still loading", () => {
+  const history = {
+    listed: () => new Promise(() => {}),
+  } as unknown as GooseHistory;
+  activity(gooseHistory(), { saved: [], ids: ["old"] }, history);
+  expect(screen.getByText("Loading older sessions…")).toBeInTheDocument();
+  expect(screen.queryByText(/^None\./)).toBeNull();
 });
 
 it("lists the opened conversation's channel first, then every session newest first", () => {

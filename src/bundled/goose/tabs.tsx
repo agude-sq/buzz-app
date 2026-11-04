@@ -896,24 +896,42 @@ export function createTabs({
       .filter(({ id }) => !known.has(id))
       .reverse()
       .slice(0, RECENT_LIMIT);
-    const untitled = kept.some((session) => session.at === undefined);
-    const [listed, setListed] = useState<Map<string, GooseSessionRow>>();
+    // Sessions kept before their start was: titled from goose's listing,
+    // and taken as gone only once a listing succeeded without them.
+    const untitled = kept
+      .filter((session) => session.at === undefined)
+      .map(({ id }) => id);
+    const wanted = untitled.join(" ");
+    const [listed, setListed] = useState<
+      | { wanted: string; rows: Map<string, GooseSessionRow> }
+      | { wanted: string; error: string }
+    >();
+    const [round, setRound] = useState(0);
     const workspace = readConfig(agent.config).workspace;
-    // biome-ignore lint/correctness/useExhaustiveDependencies: listed once a profile, for the agent's workspace.
+    // A listing still answers for fewer sessions, as when one is saved.
+    const settled =
+      !!listed && untitled.every((id) => listed.wanted.split(" ").includes(id));
+    // biome-ignore lint/correctness/useExhaustiveDependencies: `untitled` follows `wanted`.
     useEffect(() => {
-      if (!untitled || listed) return;
+      if (!wanted || settled) return;
       const abort = new AbortController();
-      history
-        .workspace(workspace, 0, () => false, abort.signal)
-        .then(
-          ({ rows }) =>
-            setListed(new Map(rows.map((row) => [row.sessionId, row]))),
-          () => {},
-        );
+      history.listed(workspace, new Set(untitled), abort.signal).then(
+        (rows) => setListed({ wanted, rows }),
+        (error: unknown) =>
+          abort.signal.aborted || setListed({ wanted, error: message(error) }),
+      );
       return () => abort.abort();
-    }, [untitled, workspace]);
+    }, [wanted, workspace, round]);
+    const titles = settled && "rows" in listed ? listed.rows : undefined;
+    const lookup = !wanted
+      ? undefined
+      : !settled
+        ? "loading"
+        : "error" in listed
+          ? listed.error
+          : undefined;
     const standalone = kept.flatMap(({ id, at, title = "" }): Row[] => {
-      const found = at === undefined ? listed?.get(id) : { at, title };
+      const found = at === undefined ? titles?.get(id) : { at, title };
       return found
         ? [
             {
@@ -1038,10 +1056,34 @@ export function createTabs({
                 ))}
               </ul>
             </SettingsGroup>
-          ) : (
+          ) : lookup ? null : (
             <p className="m-0 text-body-sm text-subtle">
               None. A conversation's session starts when the agent is mentioned.
             </p>
+          )}
+          {lookup === "loading" ? (
+            <p className="m-0 text-body-sm text-subtle">
+              Loading older sessions…
+            </p>
+          ) : (
+            lookup && (
+              <div className="flex items-center gap-2">
+                <p role="alert" className="m-0">
+                  Could not list older goose sessions: {lookup}
+                </p>
+                <Button
+                  type="button"
+                  variant="subtle"
+                  size="sm"
+                  onClick={() => {
+                    setListed(undefined);
+                    setRound((value) => value + 1);
+                  }}
+                >
+                  Retry
+                </Button>
+              </div>
+            )
           )}
         </section>
         {shown && (

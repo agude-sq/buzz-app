@@ -407,6 +407,25 @@ export class GooseHistory {
     });
   }
 
+  /** The listed rows of `ids`, read from goose's sessions in `workspace`
+   * newest first, page by page, until every one is found or none are left:
+   * no search and no session's messages. */
+  listed(workspace: string, ids: ReadonlySet<string>, signal: AbortSignal) {
+    return this.with(signal, async (goose, { resolveDirectory }) => {
+      const cwd = await absolute(resolveDirectory, workspace);
+      const found = new Map<string, GooseSessionRow>();
+      let cursor: string | undefined;
+      do {
+        const read = await page(goose, cwd, undefined, cursor);
+        for (const row of read.rows)
+          if (ids.has(row.sessionId)) found.set(row.sessionId, row);
+        cursor = read.next;
+        signal.throwIfAborted();
+      } while (cursor && found.size < ids.size);
+      return found;
+    });
+  }
+
   /** The latest turns of the lookup's sessions, oldest first, or undefined
    * when goose has none of them. */
   transcript(
