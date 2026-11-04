@@ -892,7 +892,7 @@ it("ends a stopped agent's leftover shells and lets it start again only after le
     "BACK",
   ]);
 });
-it("logs a failed idle terminal clean without ending the shared server or blocking the agent's return", async () => {
+it("rejects failed terminal cleanup and retries the same agent without ending the shared server", async () => {
   const f = fixture([{ processId: "dev-server" }]);
   const b = second(f);
   await f.runtime.run(f.delivery("work"));
@@ -901,29 +901,47 @@ it("logs a failed idle terminal clean without ending the shared server or blocki
   const thread = (f.starts()[1]?.params as { threadId: string } | undefined)
     ?.threadId;
   await f.complete(1, "SERVER RUNNING");
-  await vi.waitFor(() => expect(b.agent.publish).toHaveBeenCalledTimes(1));
-  f.failing.add("thread/backgroundTerminals/clean");
-  const error = vi.spyOn(console, "error").mockImplementation(() => {});
-  f.runtime.sync([{ key: pubkey, pubkey } as Agent]);
   await vi.waitFor(() =>
-    expect(error).toHaveBeenCalledWith(
-      "Codex could not clean a stopped agent's terminals",
-      new Error("thread/backgroundTerminals/clean failed"),
-    ),
+    expect(
+      f.runtime.sessionState(
+        { ...b.agent, config: f.delivery("unused").config } as unknown as Agent,
+        { channelId: "channel", root: "7".repeat(64) },
+      ),
+    ).toBe("idle"),
   );
-  error.mockRestore();
+  const gate = deferred<void>();
+  f.held.set("thread/backgroundTerminals/clean", gate.promise);
+  f.failing.add("thread/backgroundTerminals/clean");
+  const driver = codexRun(f.runtime);
+  if (!driver.retire) throw new Error("Codex cannot retire its agents");
+  const retirement = driver.retire(b.agent.key);
+  const rejected = expect(retirement).rejects.toThrow(
+    "thread/backgroundTerminals/clean failed",
+  );
+  try {
+    await vi.waitFor(() =>
+      expect(
+        f.sent.filter(
+          (wire) => wire.method === "thread/backgroundTerminals/clean",
+        ),
+      ).toHaveLength(1),
+    );
+    expect(f.process.end).not.toHaveBeenCalled();
+    await f.complete(0, "STILL HERE");
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  } finally {
+    gate.resolve();
+  }
+  await rejected;
+  f.failing.delete("thread/backgroundTerminals/clean");
+  f.held.delete("thread/backgroundTerminals/clean");
+  await driver.retire(b.agent.key);
   expect(
-    f.sent.find((wire) => wire.method === "thread/backgroundTerminals/clean")
-      ?.params,
-  ).toMatchObject({ threadId: thread });
+    f.sent
+      .filter((wire) => wire.method === "thread/backgroundTerminals/clean")
+      .map((wire) => wire.params),
+  ).toEqual([{ threadId: thread }, { threadId: thread }]);
   expect(f.process.end).not.toHaveBeenCalled();
-  await f.complete(0, "STILL HERE");
-  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
-  expect(contents(f.publish)).toEqual(["STILL HERE"]);
-  f.runtime.sync([
-    { key: pubkey, pubkey } as Agent,
-    { key: "9".repeat(64), pubkey: "9".repeat(64) } as Agent,
-  ]);
   await f.runtime.run(b.delivery("back"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
   expect(
@@ -931,6 +949,7 @@ it("logs a failed idle terminal clean without ending the shared server or blocki
   ).toMatchObject({ threadId: thread });
   await f.complete(2, "BACK");
   await vi.waitFor(() => expect(b.agent.publish).toHaveBeenCalledTimes(2));
+  expect(contents(f.publish)).toEqual(["STILL HERE"]);
   expect(contents(b.agent.publish as never)).toEqual([
     "SERVER RUNNING",
     "BACK",
@@ -4897,6 +4916,62 @@ function guestTarget(guest: ReturnType<typeof fixture>): AgentExecution {
     },
   };
 }
+
+it.each(["open", "new"])(
+  "rejects and retries target cleanup that fails during %s",
+  async (operation) => {
+    const guest = fixture();
+    const execution = guestTarget(guest);
+    const gate = deferred<void>();
+    const cleaning = deferred<void>();
+    const target = {
+      ...execution,
+      dispose: vi
+        .fn(async () => execution.dispose())
+        .mockImplementationOnce(async () => {
+          cleaning.resolve();
+          await gate.promise;
+          throw new Error("Target cleanup failed");
+        }),
+    };
+    const opened = deferred<AgentExecution>();
+    const connect = vi.fn(async () => opened.promise);
+    const f = fixture([], undefined, false, {}, undefined, undefined, connect);
+    const delivery = f.delivery("work");
+    let result = f.runtime.run(delivery).catch((error) => error);
+    await vi.waitFor(() => expect(connect).toHaveBeenCalledOnce());
+    if (operation === "new") {
+      opened.resolve(target);
+      await result;
+      await vi.waitFor(() => expect(guest.starts()).toHaveLength(1));
+      await guest.complete();
+      const agent = {
+        ...delivery.agent,
+        config: delivery.config,
+      } as unknown as Agent;
+      const place = { channelId: "channel", root };
+      await vi.waitFor(() =>
+        expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+      );
+      result = f.runtime.session(agent, place, "new").catch((error) => error);
+      await cleaning.promise;
+    }
+    const retiring = f.runtime.retire(pubkey);
+    const rejected = expect(retiring).rejects.toThrow("Target cleanup failed");
+    if (operation === "open") opened.resolve(target);
+    try {
+      await cleaning.promise;
+      expect(target.dispose).toHaveBeenCalledOnce();
+    } finally {
+      gate.resolve();
+    }
+    expect(await result).toEqual(new Error("Target cleanup failed"));
+    await rejected;
+    await f.runtime.retire(pubkey);
+    expect(target.dispose).toHaveBeenCalledTimes(2);
+    expect(target.signal.aborted).toBe(true);
+  },
+);
 
 it("waits for remote turn and target cleanup when an agent retires", async () => {
   const guest = fixture();

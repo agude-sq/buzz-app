@@ -273,6 +273,11 @@ export class CodexRuntime {
   >();
   private server: Server | undefined;
   private stopping = new Map<AgentKey, Promise<void>>();
+  private stopped = new Map<AgentKey, Entry>();
+  private disposals = new Map<
+    AgentKey,
+    Map<AgentExecution, { done: Promise<void>; failed: boolean }>
+  >();
   private views = new Map<AgentKey, readonly SessionView[]>();
   private inventories = new Map<AgentKey, SavedConversation[] | null>();
   private inventoryReads = new Map<AgentKey, object>();
@@ -372,7 +377,7 @@ export class CodexRuntime {
       };
       const execution = await this.execution?.(agent, session);
       if (this.disposed || lifetime.aborted) {
-        await execution?.dispose();
+        if (execution) await this.disposeExecution(agent, execution);
         throw new Error("Codex runtime is retired");
       }
       if (!execution) return this;
@@ -385,7 +390,7 @@ export class CodexRuntime {
         lifetime.throwIfAborted();
         execution.signal.throwIfAborted();
       } catch (error) {
-        await execution.dispose();
+        await this.disposeExecution(agent, execution);
         throw error;
       }
       const transport = new CodexExecution(execution);
@@ -538,7 +543,7 @@ export class CodexRuntime {
             const prior = this.remote.get(key);
             this.remote.delete(key);
             prior?.runtime.dispose();
-            await prior?.execution.dispose();
+            if (prior) await this.disposeExecution(agent.key, prior.execution);
             this.views.set(
               agent.key,
               [...this.remote.values()]
@@ -726,12 +731,42 @@ export class CodexRuntime {
     );
     for (const listener of this.listeners) listener();
   }
+  private disposeExecution(
+    agent: AgentKey,
+    execution: AgentExecution,
+    retry = false,
+  ) {
+    const disposals = this.disposals.get(agent) ?? new Map();
+    const prior = disposals.get(execution);
+    if (prior && (!retry || !prior.failed)) return prior.done;
+    const disposal = { done: Promise.resolve(), failed: false };
+    this.disposals.set(agent, disposals);
+    disposals.set(execution, disposal);
+    disposal.done = Promise.resolve()
+      .then(() => execution.dispose())
+      .then(
+        () => {
+          disposals.delete(execution);
+          if (!disposals.size) this.disposals.delete(agent);
+        },
+        (error) => {
+          disposal.failed = true;
+          throw error;
+        },
+      );
+    return disposal.done;
+  }
   retire(agent: AgentKey): Promise<void> {
     const prior = this.stopping.get(agent);
-    const entry = this.entries.get(agent);
+    if (prior) return prior;
+    const disposals = [...(this.disposals.get(agent)?.keys() ?? [])].map(
+      (execution) => this.disposeExecution(agent, execution, true),
+    );
+    const entry = this.entries.get(agent) ?? this.stopped.get(agent);
     const actions = [...(this.actions.get(agent) ?? [])];
     for (const action of actions) action.abort.abort();
     entry?.abort.abort();
+    if (entry) this.stopped.set(agent, entry);
     this.entries.delete(agent);
     this.views.delete(agent);
     this.previews.delete(agent);
@@ -745,21 +780,38 @@ export class CodexRuntime {
     const remotes = [...this.remote].filter(
       ([, remote]) => remote.agent === agent,
     );
-    for (const [key] of remotes) this.remote.delete(key);
-    const stopped = Promise.all([
-      prior,
+    const stopped = Promise.allSettled([
+      ...disposals,
       ...actions.map((action) => action.done.catch(() => undefined)),
-      ...(entry && this.server ? [this.stop(this.server, agent, entry)] : []),
+      ...(entry
+        ? [
+            (async () => {
+              if (this.server) await this.stop(this.server, agent, entry);
+              if (this.stopped.get(agent) === entry) this.stopped.delete(agent);
+            })(),
+          ]
+        : []),
       ...pending.map((opening) => opening.ready.catch(() => undefined)),
-      ...remotes.map(async ([, remote]) => {
+      ...remotes.map(async ([key, remote]) => {
         try {
           await remote.runtime.retire(agent);
         } finally {
           remote.runtime.dispose();
-          await remote.execution.dispose();
+          await this.disposeExecution(agent, remote.execution);
         }
+        if (this.remote.get(key) === remote) this.remote.delete(key);
       }),
-    ]).then(() => undefined);
+    ]).then(async (results) => {
+      const disposed = await Promise.allSettled(
+        [...(this.disposals.get(agent)?.values() ?? [])].map(
+          (disposal) => disposal.done,
+        ),
+      );
+      const failure = [...results, ...disposed].find(
+        (result) => result.status === "rejected",
+      );
+      if (failure?.status === "rejected") throw failure.reason;
+    });
     this.stopping.set(agent, stopped);
     const clear = () => {
       if (this.stopping.get(agent) === stopped) this.stopping.delete(agent);
@@ -772,6 +824,8 @@ export class CodexRuntime {
     const present = new Set(agents.map((agent) => agent.key));
     const held = new Set([
       ...this.entries.keys(),
+      ...this.stopped.keys(),
+      ...this.disposals.keys(),
       ...this.actions.keys(),
       ...this.views.keys(),
       ...this.previews.keys(),
@@ -803,15 +857,10 @@ export class CodexRuntime {
       for (const [threadId, owner] of server.threads)
         if (owner === agent) {
           if (this.server !== server) return;
+          await server.rpc.request("thread/backgroundTerminals/clean", {
+            threadId,
+          });
           server.threads.delete(threadId);
-          await server.rpc
-            .request("thread/backgroundTerminals/clean", { threadId })
-            .catch((error) =>
-              console.error(
-                "Codex could not clean a stopped agent's terminals",
-                error,
-              ),
-            );
         }
     })();
     return stopped;
@@ -886,7 +935,9 @@ export class CodexRuntime {
     const entry: Entry = {
       storageKey: this.storageKey(scope, agent),
       abort: new AbortController(),
-      after: this.stopping.get(agent) ?? Promise.resolve(),
+      after:
+        this.stopping.get(agent) ??
+        (this.stopped.has(agent) ? this.retire(agent) : Promise.resolve()),
       saved,
       lanes: new Map(),
       onces: new Set(),
@@ -1410,7 +1461,8 @@ export class CodexRuntime {
       } finally {
         this.remote.delete(storageKey);
         runtime?.dispose();
-        await runtime?.target?.dispose();
+        if (runtime?.target)
+          await this.disposeExecution(agent.key, runtime.target);
         await this.storage.set(storageKey, null);
       }
     }
@@ -1428,7 +1480,7 @@ export class CodexRuntime {
         error:
           "Choose an absolute workspace path or ~/.buzz in Codex settings first.",
       };
-    await entry.after.catch(() => undefined);
+    await entry.after;
     const server = this.open();
     const signal = AbortSignal.any([entry.abort.signal, turnSignal]);
     let release!: () => void;
@@ -1644,7 +1696,13 @@ export class CodexRuntime {
           request.answered();
           return;
         }
-        await this.execute(request, text, key, current, entry);
+        try {
+          await entry.after;
+          await this.execute(request, text, key, current, entry);
+        } catch (error) {
+          request.failActivity(message(error));
+          throw error;
+        }
       });
     lane.tail = job;
     this.status(request.agent.key, key, "Starting");
