@@ -123,6 +123,15 @@ it.each([
   [{ authors: [viewer.pubkey, alice.pubkey], kinds: [30078] }],
   [{ authors: [viewer.pubkey], kinds: [30078], "#h": ["a"] }],
   [{ authors: [viewer.pubkey], kinds: [30078], ids: ["a".repeat(64)] }],
+  [{ authors: [viewer.pubkey], kinds: [30078], "#t": ["other-topic"] }],
+  [{ authors: [viewer.pubkey], kinds: [30078], "#d": ["other-setting"] }],
+  [
+    {
+      authors: [viewer.pubkey],
+      kinds: [30078],
+      "#d": [`read-state:${"a".repeat(32)}`, "other-setting"],
+    },
+  ],
 ])(
   "does not exempt mixed, channel-scoped or non-owner personal reads from revocation: %j",
   async (...filters) => {

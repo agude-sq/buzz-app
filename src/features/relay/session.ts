@@ -180,6 +180,13 @@ function isOwnReadStateFilter(filter: ReadFilter, viewer: string | undefined) {
     filter.kinds[0] === 30078 &&
     filter.authors?.length === 1 &&
     filter.authors[0] === viewer &&
+    (filter["#t"] === undefined ||
+      (filter["#t"].length === 1 && filter["#t"][0] === "read-state")) &&
+    (filter["#d"] === undefined ||
+      (filter["#d"].length > 0 &&
+        filter["#d"].every((coordinate) =>
+          /^read-state:[0-9a-f]{32}$/.test(coordinate),
+        ))) &&
     Object.keys(filter).every((key) =>
       ["kinds", "authors", "limit", "#t", "#d"].includes(key),
     )
