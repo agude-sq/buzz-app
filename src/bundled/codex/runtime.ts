@@ -675,7 +675,11 @@ export class CodexRuntime {
     const existing = this.previews.get(agent.key);
     if (existing?.key === key) return existing.ready;
     const ready = (async () => {
-      if (await this.inspect?.(agent.key)) {
+      const binding = await this.inspect?.(agent.key);
+      if (this.disposed) throw new Error("Codex runtime is disposed");
+      if (this.previews.get(agent.key) !== entry)
+        throw new Error("Codex model preview is retired");
+      if (binding) {
         const remote = this.resolveConfig(agent.config, true);
         return {
           current: remote.model,

@@ -6371,7 +6371,7 @@ it("uses the default local flow without opening or claiming execution", async ()
   await f.complete();
 });
 
-it.each(["conversation", "standalone"])(
+it.each(["conversation", "standalone", "preview"])(
   "does not revive disposed local work after %s inspection",
   async (mode) => {
     const inspected = deferred<undefined>();
@@ -6393,14 +6393,19 @@ it.each(["conversation", "standalone"])(
     );
     const delivery = f.delivery("local work");
     const result =
-      mode === "conversation"
-        ? f.runtime.run(delivery)
-        : f.runtime.runOnce({
-            delivery,
-            key: "watch",
-            signal: delivery.signal,
-            prompt: async () => undefined,
-          });
+      mode === "preview"
+        ? f.runtime.preview({
+            ...delivery.agent,
+            config: delivery.config,
+          } as unknown as Agent)
+        : mode === "conversation"
+          ? f.runtime.run(delivery)
+          : f.runtime.runOnce({
+              delivery,
+              key: "watch",
+              signal: delivery.signal,
+              prompt: async () => undefined,
+            });
     const rejected = expect(result).rejects.toThrow(
       "Codex runtime is disposed",
     );
