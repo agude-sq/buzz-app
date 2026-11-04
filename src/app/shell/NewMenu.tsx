@@ -11,7 +11,7 @@ import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { splitPartition } from "../../features/relay/partition";
 import { NewWorkspace } from "../../features/solo/NewWorkspace";
-import { Button } from "../../shared/design-system/ui/Button";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   MenuRoot,
   MenuTrigger,
@@ -21,6 +21,8 @@ import {
   MenuGroupLabel,
   MenuSeparator,
 } from "../../shared/design-system/ui/Menu";
+import styles from "./NewMenu.module.css";
+import { PlusIcon } from "../../shared/design-system/icons";
 
 type Props = {
   relay: RelayData;
@@ -67,16 +69,17 @@ function ReadyNewMenu({
   const menuTrigger = (
     <MenuTrigger
       render={
-        <Button
+        <IconButton
+          hint="familiar"
           ref={trigger}
           disabled={!available}
           aria-label="New"
           title="New"
-          variant="ghost"
+          variant="inset"
+          shape="round"
           size="sm"
-        >
-          New
-        </Button>
+          icon={<PlusIcon className={styles.createIcon} size={16} />}
+        />
       }
     />
   );
