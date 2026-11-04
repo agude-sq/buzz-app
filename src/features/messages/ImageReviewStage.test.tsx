@@ -979,3 +979,87 @@ it("hides Copy when the host does not provide image clipboard access", () => {
     screen.queryByRole("button", { name: "Copy image" }),
   ).not.toBeInTheDocument();
 });
+
+it("shows a failed image's error with Retry, disables zoom and hides image actions until it loads", () => {
+  stubImageCopy();
+  const { stage, image } = setup();
+  expect(screen.getByRole("button", { name: "Copy image" })).toBeEnabled();
+  fireEvent.error(image);
+  expect(screen.getByRole("status")).toHaveTextContent("Couldn't load image");
+  expect(stage.querySelector("img")).toBeNull();
+  for (const name of ["Zoom out", /^Image zoom:/, "Zoom in"])
+    expect(screen.getByRole("button", { name })).toBeDisabled();
+  expect(
+    screen.queryByRole("button", { name: "Copy image" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("link", { name: "Download image" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByText("Click the image to zoom."),
+  ).not.toBeInTheDocument();
+  // A press on the error is not a press on the picture.
+  press(screen.getByRole("status"), { x: 250, y: 200 });
+  expect(stage).not.toHaveAttribute("data-review-zoomed");
+
+  fireEvent.click(screen.getByRole("button", { name: "Retry image" }));
+  expect(screen.getByRole("status")).toHaveTextContent("Loading image…");
+  const retried = stage.querySelector("img");
+  expect(retried).not.toBe(image);
+  expect(retried).toHaveAttribute(
+    "src",
+    "/api/relay/media?url=https%3A%2F%2Ffixture.test%2Fphoto.png",
+  );
+  expect(screen.getByRole("button", { name: "Zoom in" })).toBeDisabled();
+  if (!retried) throw new Error("Missing retried image");
+  fireEvent.error(retried);
+  expect(screen.getByRole("status")).toHaveTextContent("Couldn't load image");
+  expect(stage.querySelector("img")).toBeNull();
+
+  fireEvent.click(screen.getByRole("button", { name: "Retry image" }));
+  const loaded = screen.getByRole("img");
+  fireEvent.load(loaded);
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Zoom in" })).toBeEnabled();
+  expect(loaded).toHaveAccessibleDescription("Click the image to zoom.");
+  expect(screen.getByRole("button", { name: "Copy image" })).toBeEnabled();
+  expect(
+    screen.getByRole("link", { name: "Download image" }),
+  ).toBeInTheDocument();
+});
+
+it("keeps gallery navigation around a failed image, and returning to it requests it again", () => {
+  const attachments = [
+    { url: "https://fixture.test/one.png", kind: "image" as const },
+    { url: "https://fixture.test/two.png", kind: "image" as const },
+  ];
+  function Gallery() {
+    const [selectedUrl, select] = useState("https://fixture.test/one.png");
+    return (
+      <ImageReviewStage
+        attachments={attachments}
+        selectedUrl={selectedUrl}
+        select={select}
+        media={(url) => url}
+        onOpenLink={() => false}
+      />
+    );
+  }
+  render(<Gallery />);
+  fireEvent.error(screen.getByRole("img"));
+  expect(screen.getByRole("status")).toHaveTextContent("Couldn't load image");
+  fireEvent.click(screen.getByRole("button", { name: "Next image" }));
+  expect(screen.getByRole("img")).toHaveAttribute(
+    "src",
+    "https://fixture.test/two.png",
+  );
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Zoom in" })).toBeEnabled();
+  // No other view of the first image is mounted, so its failure is forgotten.
+  fireEvent.click(screen.getByRole("button", { name: "Previous image" }));
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  expect(screen.getByRole("img")).toHaveAttribute(
+    "src",
+    "https://fixture.test/one.png",
+  );
+});

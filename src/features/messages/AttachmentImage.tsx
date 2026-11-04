@@ -2,6 +2,13 @@ import { useConversationPresentation } from "../conversation/ConversationPresent
 import { prepareReviewEntrance } from "./use-review-entrance";
 import { useMediaCorners } from "./use-media-corners";
 import { MediaViewer } from "./MediaAttachment";
+import { ImageLoadError } from "./ImageLoadError";
+import {
+  imageFailed,
+  imageLoaded,
+  retryImage,
+  useImageLoad,
+} from "./image-load";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Attachment } from "../relay/contracts";
@@ -68,6 +75,33 @@ export function AttachmentImage({
     decoded.source === source && decoded.session === session
       ? decoded.dimensions
       : undefined;
+  const load = useImageLoad(source);
+  // Pixels this view already shows outlast another view's failed request. The
+  // "+N" tile stays the gallery link.
+  const failed = !!load && !overlayCount && !decodedDimensions;
+  // Focus inside a failed frame moves to the image link that replaces it. The
+  // frame's ref is detached before its removal, while it still holds focus.
+  const refocus = useRef(false);
+  const frame = useCallback(
+    (element: HTMLSpanElement) => {
+      const release = corners(element);
+      return () => {
+        refocus.current = element.contains(document.activeElement);
+        release?.();
+      };
+    },
+    [corners],
+  );
+  const link = useCallback(
+    (element: HTMLAnchorElement | null) => {
+      if (element && refocus.current) {
+        refocus.current = false;
+        if (document.activeElement === document.body) element.focus();
+      }
+      return corners(element);
+    },
+    [corners],
+  );
   const knownDimensions = decodedDimensions ?? imageDimensions(session, source);
   const dimensions = knownDimensions ?? attachment.dimensions;
   const width = dimensions
@@ -116,53 +150,76 @@ export function AttachmentImage({
         <span>Image unavailable</span>
       </span>
     );
+  // Retargeting retires both the DOM pixels and all pending callbacks before
+  // the new source can paint. Session switches also remount the workspace.
+  const pixels = (
+    <span className={styles.attachmentImagePixels}>
+      {source && (
+        <ImagePixels
+          key={JSON.stringify([source, attachment.blurhash])}
+          source={source}
+          blurhash={attachment.blurhash}
+          paused={failed && load === "failed"}
+          onDecoded={onDecoded}
+        />
+      )}
+      {overlayCount > 0 && (
+        <span className={styles.imageOverflow} aria-hidden="true">
+          +{overlayCount}
+        </span>
+      )}
+    </span>
+  );
+  const outline = (
+    <svg
+      className={styles.imageOutline}
+      data-image-outline=""
+      aria-hidden="true"
+    >
+      <path />
+    </svg>
+  );
   return (
     <>
-      <a
-        ref={corners}
-        className={styles.attachmentImage}
-        style={style}
-        href={source ?? attachment.url}
-        target="_blank"
-        rel="noreferrer"
-        aria-label={label}
-        data-media-preview=""
-        data-image-ready={decodedDimensions ? true : undefined}
-        onClick={(event) => {
-          // Every activation stays in-app, modifiers included: the desktop
-          // opener treats an unprevented Ctrl/Shift or `_blank` click as browser
-          // intent, and no browser tab holds the app's credentials.
-          event.preventDefault();
-          prepareReviewEntrance(event);
-          if (onOpenReview) onOpenReview(attachment, 0);
-          else if (!onOpenLink?.(attachment.url)) setViewerOpen(true);
-        }}
-      >
-        {/* Retargeting retires both the DOM pixels and all pending callbacks before
-            the new source can paint. Session switches also remount the workspace. */}
-        <span className={styles.attachmentImagePixels}>
-          {source && (
-            <ImagePixels
-              key={JSON.stringify([source, attachment.blurhash])}
-              source={source}
-              blurhash={attachment.blurhash}
-              onDecoded={onDecoded}
-            />
-          )}
-          {overlayCount > 0 && (
-            <span className={styles.imageOverflow} aria-hidden="true">
-              +{overlayCount}
-            </span>
-          )}
-        </span>
-        <svg
-          className={styles.imageOutline}
-          data-image-outline=""
-          aria-hidden="true"
+      {failed && source ? (
+        <span
+          ref={frame}
+          className={styles.attachmentImage}
+          style={style}
+          data-image-failed=""
         >
-          <path />
-        </svg>
-      </a>
+          {pixels}
+          {outline}
+          <ImageLoadError
+            retrying={load === "retrying"}
+            onRetry={() => retryImage(source)}
+          />
+        </span>
+      ) : (
+        <a
+          ref={link}
+          className={styles.attachmentImage}
+          style={style}
+          href={source ?? attachment.url}
+          target="_blank"
+          rel="noreferrer"
+          aria-label={label}
+          data-media-preview=""
+          data-image-ready={decodedDimensions ? true : undefined}
+          onClick={(event) => {
+            // Every activation stays in-app, modifiers included: the desktop
+            // opener treats an unprevented Ctrl/Shift or `_blank` click as browser
+            // intent, and no browser tab holds the app's credentials.
+            event.preventDefault();
+            prepareReviewEntrance(event);
+            if (onOpenReview) onOpenReview(attachment, 0);
+            else if (!onOpenLink?.(attachment.url)) setViewerOpen(true);
+          }}
+        >
+          {pixels}
+          {outline}
+        </a>
+      )}
       {active &&
         viewerOpen &&
         createPortal(
@@ -185,10 +242,13 @@ export function AttachmentImage({
 function ImagePixels({
   source,
   blurhash,
+  paused,
   onDecoded,
 }: {
   source: string;
   blurhash: string | undefined;
+  /** Keeps the preview without requesting a failed original until Retry. */
+  paused: boolean;
   onDecoded: (dimensions: NonNullable<Attachment["dimensions"]>) => void;
 }) {
   const image = useRef<HTMLImageElement>(null);
@@ -218,7 +278,7 @@ function ImagePixels({
             height: original.naturalHeight,
           });
       } catch {
-        // Keep the blur preview on original failure, including decode rejection.
+        // Keep the blur preview on decode rejection; load errors offer Retry.
       } finally {
         decoding = false;
       }
@@ -264,10 +324,12 @@ function ImagePixels({
       )}
       <img
         ref={image}
-        src={source}
+        src={paused ? undefined : source}
         alt=""
         loading="lazy"
         style={{ visibility: ready ? "visible" : "hidden" }}
+        onLoad={() => imageLoaded(source)}
+        onError={() => imageFailed(source)}
       />
     </>
   );

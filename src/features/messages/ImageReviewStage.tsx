@@ -30,6 +30,13 @@ import styles from "./Messages.module.css";
 import { MediaDownloadAction } from "./MediaDownloadAction";
 import { copyImageToClipboard, supportsImageCopy } from "./image-copy";
 import { copyNativeImage } from "./native-image-copy";
+import { ImageLoadError } from "./ImageLoadError";
+import {
+  imageFailed,
+  imageLoaded,
+  retryImage,
+  useImageLoad,
+} from "./image-load";
 
 const ZOOM_STEP = 0.25;
 const ZOOM_PRESETS = [0.5, 1, 1.5, 2];
@@ -79,14 +86,17 @@ export function ImageReviewStage({
   );
   const selected = attachments[selectedIndex] ?? attachments[0];
   const source = selected ? media(selected.url) : undefined;
+  const load = useImageLoad(source);
+  // Only a loaded original can be zoomed, copied, downloaded or opened.
+  const pixels = load ? undefined : source;
   // A press that outlives its image must not zoom any later one, even when
   // navigation returns to the same source.
   useLayoutEffect(() => {
     void source;
     if (press.current) press.current.click = false;
   }, [source]);
-  const nativeSource = source ? isNativeMediaSource(source) : false;
-  const proxySource = source ? isProxySource(source) || nativeSource : false;
+  const nativeSource = pixels ? isNativeMediaSource(pixels) : false;
+  const proxySource = pixels ? isProxySource(pixels) || nativeSource : false;
   const [downloadFeedbackVisible, setDownloadFeedbackVisible] = useState(false);
   const [copying, setCopying] = useState(false);
   const [copyNotice, setCopyNotice] = useState<"success" | "error">();
@@ -94,7 +104,7 @@ export function ImageReviewStage({
   const copyNoticeTimer = useRef<number | undefined>(undefined);
   const selectedUrlRef = useRef(selectedUrl);
   selectedUrlRef.current = selectedUrl;
-  const externalSource = source ? safeOpenUrl(source) && !proxySource : false;
+  const externalSource = pixels ? safeOpenUrl(pixels) && !proxySource : false;
   const canCopyImage =
     allowCopy && proxySource && (nativeSource || supportsImageCopy());
   const {
@@ -105,7 +115,7 @@ export function ImageReviewStage({
     toggleZoomAt,
     panTo,
     constrain,
-  } = useImageViewport(stage, image, source);
+  } = useImageViewport(stage, image, pixels);
   const copyFeedbackVisible = copying || copyNotice !== undefined;
   const feedbackVisible = copyFeedbackVisible || downloadFeedbackVisible;
   const idle = useMediaControls(stage, source, feedbackVisible);
@@ -115,7 +125,7 @@ export function ImageReviewStage({
     stage,
     image,
     selected?.url,
-    source,
+    pixels,
   );
 
   const clearCopyNoticeTimer = useCallback(() => {
@@ -242,7 +252,9 @@ export function ImageReviewStage({
       data-review-zoomed={zoom !== 1 || undefined}
       className={`${styles.imageReviewStage} ${pannable ? styles.imageReviewPannable : ""} ${dragging ? styles.imageReviewDragging : ""}`}
       onPointerDown={(event) => {
-        if (event.button !== 0) return;
+        // Without a picture there is nothing to zoom or pan, and capture would
+        // retarget a Retry click to the stage.
+        if (event.button !== 0 || !pixels) return;
         if (press.current) {
           // Multi-touch is not a click; the first contact keeps the pan.
           press.current.click = false;
@@ -291,7 +303,7 @@ export function ImageReviewStage({
         ...(departing && departing.url !== selected.url ? [departing] : []),
         {
           url: selected.url,
-          source,
+          source: load === "failed" ? undefined : source,
           transform:
             zoom === 1
               ? "none"
@@ -299,22 +311,31 @@ export function ImageReviewStage({
         },
       ].map((item) => {
         const current = item.url === selected.url;
-        return item.source ? (
+        const itemSource = item.source;
+        return itemSource ? (
           <img
             key={item.url}
             ref={current ? image : undefined}
             data-review-media={current ? "" : undefined}
             data-gallery-departing={!current ? "" : undefined}
             data-review-chrome={!current ? "" : undefined}
-            src={item.source}
+            src={itemSource}
             alt={current ? "Attachment preview" : ""}
             aria-describedby={current ? zoomHint : undefined}
             aria-hidden={!current || undefined}
             draggable={false}
-            onLoad={current ? constrain : undefined}
+            onLoad={
+              current
+                ? () => {
+                    constrain();
+                    imageLoaded(itemSource);
+                  }
+                : undefined
+            }
+            onError={current ? () => imageFailed(itemSource) : undefined}
             style={{ transform: item.transform }}
           />
-        ) : (
+        ) : load ? null : (
           <p
             key={item.url}
             className={styles.mediaReviewUnavailable}
@@ -324,9 +345,17 @@ export function ImageReviewStage({
           </p>
         );
       })}
-      <p id={zoomHint} className="sr-only">
-        Click the image to zoom.
-      </p>
+      {load && source && (
+        <ImageLoadError
+          retrying={load === "retrying"}
+          onRetry={() => retryImage(source)}
+        />
+      )}
+      {pixels && (
+        <p id={zoomHint} className="sr-only">
+          Click the image to zoom.
+        </p>
+      )}
       <div
         className={styles.imageReviewToolbar}
         data-image-controls=""
@@ -363,7 +392,7 @@ export function ImageReviewStage({
             size="sm"
             type="button"
             aria-label="Zoom out"
-            disabled={zoom <= MIN_ZOOM}
+            disabled={!pixels || zoom <= MIN_ZOOM}
             onClick={() => setBoundedZoom(zoom - ZOOM_STEP)}
             icon={<MinusIcon size={16} aria-hidden="true" />}
           />
@@ -372,6 +401,7 @@ export function ImageReviewStage({
             size="sm"
             type="button"
             aria-label={`Image zoom: ${Math.round(zoom * 100)}%. Zoom to ${nextZoom * 100}%`}
+            disabled={!pixels}
             onClick={() => setBoundedZoom(nextZoom)}
           >
             {Math.round(zoom * 100)}%
@@ -380,7 +410,7 @@ export function ImageReviewStage({
             size="sm"
             type="button"
             aria-label="Zoom in"
-            disabled={zoom >= maxZoom}
+            disabled={!pixels || zoom >= maxZoom}
             onClick={() => setBoundedZoom(zoom + ZOOM_STEP)}
             icon={<PlusIcon size={16} aria-hidden="true" />}
           />
@@ -403,11 +433,11 @@ export function ImageReviewStage({
             {copyNotice === "success" ? "Image copied" : "Couldn't copy image"}
           </span>
         )}
-        {nativeSource && source && (
+        {nativeSource && pixels && (
           <MediaDownloadAction
-            key={JSON.stringify([selected.url, source, selected.name])}
+            key={JSON.stringify([selected.url, pixels, selected.name])}
             kind="image"
-            source={source}
+            source={pixels}
             name={selected.name ?? ""}
             onFeedbackVisible={setDownloadFeedbackVisible}
           />
@@ -416,25 +446,25 @@ export function ImageReviewStage({
           <IconButton
             nativeButton={false}
             role="link"
-            render={<a href={source} download />}
+            render={<a href={pixels} download />}
             size="sm"
             aria-label="Download image"
             title="Download image"
             icon={<DownloadIcon size={17} />}
           />
         )}
-        {source && externalSource && (
+        {pixels && externalSource && (
           <IconButton
             nativeButton={false}
             role="link"
             render={
               <a
-                href={source}
+                href={pixels}
                 target="_blank"
                 rel="noreferrer"
                 onClick={(event) => {
                   if (event.metaKey || event.ctrlKey || event.shiftKey) return;
-                  if (onOpenLink(source)) event.preventDefault();
+                  if (onOpenLink(pixels)) event.preventDefault();
                 }}
               />
             }

@@ -6,7 +6,7 @@ import { watchPageErrors } from "./page-errors.mjs";
 
 const fixtureImage = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360"><rect width="640" height="360" fill="#666"/></svg>`;
 
-function fixtureMediaPlugin() {
+function fixtureMediaPlugin(media = {}) {
   return {
     name: "messages-fixture-media",
     configureServer(server) {
@@ -15,6 +15,11 @@ function fixtureMediaPlugin() {
         const url = new URL(req.url ?? "", "http://fixture.local");
         const target = url.searchParams.get("url") ?? "";
         if (!target.startsWith("https://fixture.test/media/")) return next();
+        if (media.missing?.(target)) {
+          res.writeHead(404);
+          res.end("missing");
+          return;
+        }
         res.writeHead(200, {
           "Content-Type": "image/svg+xml",
           "Content-Length": Buffer.byteLength(fixtureImage),
@@ -25,19 +30,19 @@ function fixtureMediaPlugin() {
   };
 }
 
-function createMessagesServer() {
+function createMessagesServer(media) {
   return createServer({
     root: fileURLToPath(new URL("../../", import.meta.url)),
     configFile: false,
     envFile: false,
-    plugins: [fixtureMediaPlugin(), react()],
+    plugins: [fixtureMediaPlugin(media), react()],
     logLevel: "error",
     server: { host: "127.0.0.1", port: 0, strictPort: false },
   });
 }
 
-async function withMessagesFixture(page, run, search = "") {
-  const server = await createMessagesServer();
+async function withMessagesFixture(page, run, search = "", media) {
+  const server = await createMessagesServer(media);
   await server.listen();
   try {
     const address = server.httpServer.address();
@@ -171,6 +176,79 @@ test("media review chrome follows host colors while stage controls stay dark", a
       page.getByRole("button", { name: "Review image", exact: true }),
     ).toBeFocused();
   });
+});
+
+// Browser-only: the toolbar overlays the stage, so a failed image's recovery
+// lays out above it at every viewer size and text scale.
+test("a failed image in the viewer keeps Retry clear of the toolbar and requests it again", async ({
+  page,
+}) => {
+  let requests = 0;
+  const missing = (target) => target.endsWith("/one.png") && ++requests > 0;
+  await withMessagesFixture(
+    page,
+    async () => {
+      const dialog = page.getByRole("dialog", { name: "Image viewer" });
+      const stage = dialog.locator("[data-review-stage]");
+      const status = stage.getByRole("status");
+      const retry = stage.getByRole("button", { name: /Retry/ });
+      for (const [width, height, scale] of [
+        [1440, 950, 1],
+        [1440, 950, 2],
+        [375, 700, 2],
+      ]) {
+        await page.setViewportSize({ width, height });
+        await page.evaluate(
+          (scale) =>
+            document.documentElement.style.setProperty(
+              "--buzz-text-scale",
+              String(scale),
+            ),
+          scale,
+        );
+        await page
+          .getByRole("button", { name: "Review image", exact: true })
+          .click();
+        await expect(status).toHaveText("Couldn't load image");
+        await expect(stage.locator("img")).toHaveCount(0);
+        await expect(
+          stage.getByRole("button", { name: "Zoom in", exact: true }),
+        ).toBeDisabled();
+        for (const name of [
+          "Copy image",
+          "Download image",
+          "Open image in browser",
+        ])
+          await expect(
+            stage
+              .getByRole("button", { name })
+              .or(stage.getByRole("link", { name })),
+          ).toHaveCount(0);
+        const bounds = await visibleBox(stage);
+        const toolbar = await stage
+          .locator("[data-image-controls]")
+          .boundingBox();
+        const button = await visibleBox(retry);
+        containedWithin(toolbar, bounds);
+        containedWithin(button, bounds);
+        expect(button.y + button.height).toBeLessThanOrEqual(toolbar.y);
+        await dialog
+          .getByRole("button", { name: "Close fullscreen viewer" })
+          .click();
+        await expect(dialog).toBeHidden();
+      }
+      await page
+        .getByRole("button", { name: "Review image", exact: true })
+        .click();
+      await expect(status).toHaveText("Couldn't load image");
+      const attempts = requests;
+      await retry.click();
+      await expect.poll(() => requests).toBe(attempts + 1);
+      await expect(status).toHaveText("Couldn't load image");
+    },
+    "",
+    { missing },
+  );
 });
 
 test("inline video controls follow playback, hover and keyboard focus", async ({
