@@ -543,3 +543,69 @@ it("keeps shown memories beside the error when a later page fails, then recovers
   ).toBeInTheDocument();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
+
+it("keeps a failed page's memories through a pending and failed Retry, then recovers", async () => {
+  const user = userEvent.setup();
+  const held: {
+    resolve: (listing: MemoryListing) => void;
+    reject: (error: Error) => void;
+  }[] = [];
+  const read = vi.fn(
+    (
+      _agent: string,
+      _signal: AbortSignal,
+      _slug?: string,
+      onPage?: (page: MemoryListing) => void,
+    ) =>
+      new Promise<MemoryListing>((resolve, reject) => {
+        if (read.mock.calls.length === 1)
+          onPage?.({
+            entries: [entry("core", "Kept."), entry("mem/first", "One.")],
+            partial: true,
+          });
+        held.push({ resolve, reject });
+      }),
+  );
+  setup(read);
+  const fail = async () =>
+    act(async () => held.at(-1)?.reject(new Error("broken")));
+  const shown = () => {
+    expect(screen.getByRole("button", { name: "core" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /first/ })).toBeInTheDocument();
+  };
+  // 1–2: a page loads, then a later page fails.
+  await screen.findByRole("button", { name: /first/ });
+  await fail();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Memory couldn't be read.",
+  );
+  shown();
+  // 3: Retry is held pending.
+  await user.click(
+    screen.getByRole("button", { name: "Retry loading memories" }),
+  );
+  const retries = read.mock.calls.length;
+  expect(retries).toBeGreaterThan(1);
+  shown();
+  // 4: the Retry fails before sending any page.
+  await fail();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Memory couldn't be read.",
+  );
+  shown();
+  // 5: a read succeeds and recovers.
+  await user.click(
+    screen.getByRole("button", { name: "Retry loading memories" }),
+  );
+  await act(async () =>
+    held.at(-1)?.resolve({
+      entries: [entry("core", "Kept."), entry("mem/second", "Two.")],
+      partial: false,
+    }),
+  );
+  expect(
+    await screen.findByRole("button", { name: /second/ }),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /first/ })).toBeNull();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});

@@ -5,7 +5,7 @@ import { Header } from "../../shared/design-system/ui/Header";
 // memory the same way, encrypted to the owner, so the app shows it once: `core`
 // (what each run is given) first, then the slugs the agent reads on demand.
 import { useReducedMotion } from "motion/react";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { formatFullTimestamp } from "../../shared/datetime";
@@ -68,14 +68,15 @@ const MARKDOWN: Components = {
 };
 
 /** Keeps the view for exactly as long as its plaintext is rendered, so session
- * invalidation can revoke the React copy as well as the service snapshot. */
+ * invalidation can revoke the React copy as well as the service snapshot.
+ * Retry and Refresh read again through the same view, so a failed read's
+ * entries stay on screen until a newer read replaces or clears them. */
 function useMemory(memories: AgentMemories | undefined, pubkey: string) {
-  const [attempt, setAttempt] = useState(0);
+  const reread = useRef<(() => void) | undefined>(undefined);
   const [refreshing, setRefreshing] = useState(false);
   const [snapshot, setSnapshot] = useState<MemorySnapshot>({
     status: memories ? "loading" : "unavailable",
   });
-  // biome-ignore lint/correctness/useExhaustiveDependencies: attempt asks for a fresh read.
   useEffect(() => {
     let view: View;
     try {
@@ -101,23 +102,28 @@ function useMemory(memories: AgentMemories | undefined, pubkey: string) {
       if (next.status !== "loading") setRefreshing(false);
     };
     const unsubscribe = view.subscribe(update);
-    setRefreshing(true);
-    // Keep a successful listing mounted while a manual refresh is in flight;
-    // replacing it with the loading state would make its actions disappear.
-    setSnapshot((current) =>
-      current.status === "ready" ? current : { status: "loading" },
-    );
-    void view.refresh().finally(update);
+    const read = () => {
+      setRefreshing(true);
+      // Keep a listing mounted while a refresh is in flight; replacing it
+      // with the loading state would make its actions disappear.
+      setSnapshot((current) =>
+        current.listing ? current : { status: "loading" },
+      );
+      void view.refresh().finally(update);
+    };
+    reread.current = read;
+    read();
     return () => {
       live = false;
+      if (reread.current === read) reread.current = undefined;
       unsubscribe();
       view.dispose();
     };
-  }, [memories, pubkey, attempt]);
+  }, [memories, pubkey]);
   return {
     snapshot,
     refreshing,
-    refresh: () => setAttempt((count) => count + 1),
+    refresh: () => reread.current?.(),
   };
 }
 
