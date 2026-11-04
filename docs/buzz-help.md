@@ -194,8 +194,9 @@ that agent in Buzz; they do not notify the external app through this connection.
   it searches only once that word has at least three characters, even with
   `from:` or `in:`. A shorter last word shows how many characters to type, not
   "no results". Each message result's conversation name starts with the icon
-  the sidebar shows for it: a hash for a channel, a lock for a private channel,
-  or a chat bubble for a direct message or chat.
+  its channel header shows: a hash for a public channel, a lock for a private
+  channel, or a chat bubble for a direct message or chat. Screen readers
+  announce the type before the name.
 - **Channel, people, and message search** shows “Searching…” beside each section heading
   if a lookup takes more than a second. You can open results already shown
   while the rest of the search finishes.
