@@ -65,8 +65,8 @@ export function safeOpenUrl(value: string): boolean {
   }
 }
 
-/** PROTOTYPE (gallery-prototype.ts): the signed or relay thumbnail of a gallery
- * image, or undefined when it would just be the original again. */
+/** The signed or relay thumbnail of a gallery image, or undefined when it would
+ * just be the original again (third-party images have no relay rendition). */
 export function attachmentPreview(
   attachment: Attachment,
   media: (url: string, size?: "small") => string | undefined,

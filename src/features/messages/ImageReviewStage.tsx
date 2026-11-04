@@ -4,7 +4,6 @@ import {
   useWarmOriginals,
   warmable,
 } from "./use-gallery-preload";
-import { galleryPrototype } from "./gallery-prototype";
 import { BLURHASH_SIZE, paintBlurhash } from "./blurhash";
 import { MIN_ZOOM, useImageViewport } from "./use-image-viewport";
 import { useMediaControls } from "./use-media-controls";
@@ -18,6 +17,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type ComponentProps,
 } from "react";
 import {
   ArrowSquareOutIcon,
@@ -57,9 +57,9 @@ type ImageReviewStageProps = {
   preview?(attachment: Attachment): string | undefined;
 };
 
-type Preview =
-  | { kind: "thumbnail"; source: string }
-  | { kind: "frame"; width: number; height: number; hash: string | undefined };
+/** Whether the selected original has loaded and decoded; `cached` when it was
+ * already complete on arrival, so its preview never shows. */
+type Original = { source: string; decoded: boolean; cached?: true };
 
 export function ImageReviewStage({
   attachments,
@@ -70,16 +70,6 @@ export function ImageReviewStage({
   allowCopy = true,
   preview,
 }: ImageReviewStageProps) {
-  // PROTOTYPE: read once so a running transition never changes strategy. Only
-  // the message viewer, which supplies previews, takes part.
-  const [prototype] = useState(() =>
-    preview ? galleryPrototype() : "current",
-  );
-  const progressive =
-    prototype === "placeholder" ||
-    prototype === "thumbnail" ||
-    prototype === "thumbnail+preload";
-  const thumbnails = prototype !== "placeholder" && progressive && preview;
   const stage = useRef<HTMLDivElement>(null);
   const image = useRef<HTMLImageElement>(null);
   const previousButton = useRef<HTMLButtonElement>(null);
@@ -90,8 +80,8 @@ export function ImageReviewStage({
         origin: Point;
         offset: Point;
         panning: boolean;
-        // Cleared by pointer travel, a second contact, pressing off the image, or a
-        // source change during the press.
+        // Cleared by pointer travel, a second contact, pressing off the decoded
+        // image (a preview is not the picture), or a source change during the press.
         click: boolean;
       }
     | undefined
@@ -110,74 +100,64 @@ export function ImageReviewStage({
     void source;
     if (press.current) press.current.click = false;
   }, [source]);
-  // PROTOTYPE: whether the original decoded (`instant` when it was cached).
-  const [settled, setSettled] = useState<{
-    source: string;
-    instant: boolean;
-    failed?: true;
-  }>();
-  const ready = !!source && settled?.source === source && !settled.failed;
+  // The original stays hidden until it loads, so a partial picture never
+  // shows, and its preview fades out once it has decoded. A failed original
+  // keeps its preview.
+  const [original, setOriginal] = useState<Original>();
+  const settled = original?.source === source ? original : undefined;
+  const loading = !!source && !settled;
+  const decoded = !!settled?.decoded;
   useLayoutEffect(() => {
-    const incoming = image.current;
-    if (prototype === "current" || !incoming || !source) return;
-    if (incoming.complete && incoming.naturalWidth) {
-      setSettled({ source, instant: true });
+    const element = image.current;
+    if (!element || !source) return;
+    if (element.complete) {
+      setOriginal({ source, decoded: element.naturalWidth > 0, cached: true });
       return;
     }
     let active = true;
-    // A failed original keeps its preview.
-    const failed = () =>
-      active && setSettled({ source, instant: false, failed: true });
-    const loaded = () =>
-      void incoming
-        .decode()
-        .then(() => active && setSettled({ source, instant: false }), failed);
-    incoming.addEventListener("load", loaded);
-    incoming.addEventListener("error", failed);
+    const settle = (decoded: boolean) => {
+      if (active) setOriginal({ source, decoded });
+    };
+    const loaded = async () => {
+      settle(false);
+      try {
+        await element.decode();
+        settle(true);
+      } catch {
+        // Decode rejection keeps the preview, as a load error does.
+      }
+    };
+    const failed = () => settle(false);
+    element.addEventListener("load", loaded);
+    element.addEventListener("error", failed);
     return () => {
       active = false;
-      incoming.removeEventListener("load", loaded);
-      incoming.removeEventListener("error", failed);
+      element.removeEventListener("load", loaded);
+      element.removeEventListener("error", failed);
     };
-  }, [prototype, source]);
-  const previewOf = (item: Attachment | undefined): Preview | undefined => {
-    if (!progressive || !item) return undefined;
-    const thumbnail = thumbnails ? thumbnails(item) : undefined;
-    if (thumbnail) return { kind: "thumbnail", source: thumbnail };
-    const { width = 0, height = 0 } = item.dimensions ?? {};
-    if (!(width > 0 && height > 0)) return undefined;
-    // A raster in the original's ratio, so `object-fit: contain` matches it.
-    const scale = BLURHASH_SIZE / Math.max(width, height);
-    return {
-      kind: "frame",
-      width: Math.max(1, Math.round(width * scale)),
-      height: Math.max(1, Math.round(height * scale)),
-      hash: item.blurhash,
-    };
-  };
-  const travel = useRef(1);
-  usePrefetchedPreviews(
-    thumbnails ? attachments.flatMap((item) => thumbnails(item) ?? []) : [],
+  }, [source]);
+  const [travel, setTravel] = useState(1);
+  const failedPreviews = usePrefetchedPreviews(
+    preview ? attachments.flatMap((item) => preview(item) ?? []) : [],
   );
-  useWarmOriginals(
-    prototype === "thumbnail+preload"
-      ? attachments.map((item) =>
-          warmable(item) ? media(item.url) : undefined,
-        )
-      : undefined,
+  const release = useWarmOriginals(
+    attachments.map((item) => (warmable(item) ? media(item.url) : undefined)),
     selectedIndex,
     travel,
   );
-  // PROTOTYPE `pending`: delayed status while a stale picture stays on screen.
-  const pending =
-    prototype === "pending" && !!source && settled?.source !== source;
-  const [pendingVisible, setPendingVisible] = useState(false);
-  useEffect(() => {
-    setPendingVisible(false);
-    if (!pending) return;
-    const timer = window.setTimeout(() => setPendingVisible(true), 1000);
-    return () => window.clearTimeout(timer);
-  }, [pending]);
+  // An original left before it loaded keeps downloading only while it stays
+  // within the preload window.
+  const attachImage = useCallback(
+    (element: HTMLImageElement | null) => {
+      if (!element) return;
+      image.current = element;
+      return () => {
+        if (image.current === element) image.current = null;
+        release(element);
+      };
+    },
+    [release],
+  );
   const nativeSource = source ? isNativeMediaSource(source) : false;
   const proxySource = source ? isProxySource(source) || nativeSource : false;
   const [downloadFeedbackVisible, setDownloadFeedbackVisible] = useState(false);
@@ -200,8 +180,7 @@ export function ImageReviewStage({
     constrain,
   } = useImageViewport(stage, image, source);
   const copyFeedbackVisible = copying || copyNotice !== undefined;
-  const feedbackVisible =
-    copyFeedbackVisible || downloadFeedbackVisible || pendingVisible;
+  const feedbackVisible = copyFeedbackVisible || downloadFeedbackVisible;
   const idle = useMediaControls(stage, source, feedbackVisible);
   const pannable = zoom > 1;
   const nextZoom = ZOOM_PRESETS.find((preset) => preset > zoom) ?? MIN_ZOOM;
@@ -210,7 +189,6 @@ export function ImageReviewStage({
     image,
     selected?.url,
     source,
-    progressive,
   );
 
   const clearCopyNoticeTimer = useCallback(() => {
@@ -260,8 +238,9 @@ export function ImageReviewStage({
     (index: number) => {
       const item = attachments[index];
       if (!item || item.url === selected?.url) return;
-      travel.current = index > selectedIndex ? 1 : -1;
-      prepare(travel.current, ready);
+      const direction = index > selectedIndex ? 1 : -1;
+      setTravel(direction);
+      prepare(direction, decoded);
       setBoundedZoom(1);
       clearCopyNotice();
       const active = document.activeElement;
@@ -278,7 +257,7 @@ export function ImageReviewStage({
       selected?.url,
       selectedIndex,
       prepare,
-      ready,
+      decoded,
       clearCopyNotice,
     ],
   );
@@ -337,7 +316,6 @@ export function ImageReviewStage({
       data-controls-idle={idle || undefined}
       data-controls-revealed={feedbackVisible || undefined}
       data-review-zoomed={zoom !== 1 || undefined}
-      data-gallery-prototype={prototype}
       className={`${styles.imageReviewStage} ${pannable ? styles.imageReviewPannable : ""} ${dragging ? styles.imageReviewDragging : ""}`}
       onPointerDown={(event) => {
         if (event.button !== 0) return;
@@ -351,7 +329,7 @@ export function ImageReviewStage({
           origin: { x: event.clientX, y: event.clientY },
           offset,
           panning: pannable,
-          click: event.isPrimary && event.target === image.current,
+          click: event.isPrimary && event.target === image.current && decoded,
         };
         // Capture so the release always ends this press, even off the stage.
         event.currentTarget.setPointerCapture(event.pointerId);
@@ -390,7 +368,7 @@ export function ImageReviewStage({
         {
           url: selected.url,
           source,
-          settled: ready,
+          decoded,
           transform:
             zoom === 1
               ? "none"
@@ -398,35 +376,39 @@ export function ImageReviewStage({
         },
       ].map((item) => {
         const current = item.url === selected.url;
-        const look = previewOf(attachments.find(({ url }) => url === item.url));
-        // A cached original never shows its preview; a loaded one fades it out.
-        const covered =
-          !!look && (current ? !(ready && settled?.instant) : !item.settled);
+        const attachment = attachments.find(({ url }) => url === item.url);
+        const thumbnail = attachment && preview?.(attachment);
+        // A departing original that never decoded leaves as its preview.
+        const covered = current ? !(settled?.cached && decoded) : !item.decoded;
         return item.source ? (
           <Fragment key={item.url}>
-            <img
-              ref={current ? image : undefined}
-              data-review-media={current ? "" : undefined}
-              data-gallery-departing={!current ? "" : undefined}
-              data-review-chrome={!current ? "" : undefined}
-              src={item.source}
-              alt={current ? "Attachment preview" : ""}
-              aria-describedby={current ? zoomHint : undefined}
-              aria-hidden={!current || undefined}
-              draggable={false}
-              fetchPriority={
-                current && prototype === "thumbnail+preload"
-                  ? "high"
-                  : undefined
-              }
-              onLoad={current ? constrain : undefined}
-              style={{ transform: item.transform }}
-            />
-            {covered && look && (
+            {(current || item.decoded) && (
+              <img
+                ref={current ? attachImage : undefined}
+                data-review-media={current ? "" : undefined}
+                data-gallery-departing={!current ? "" : undefined}
+                data-gallery-loading={(current && loading) || undefined}
+                data-review-chrome={!current ? "" : undefined}
+                src={item.source}
+                alt={current ? "Attachment preview" : ""}
+                aria-describedby={current ? zoomHint : undefined}
+                aria-hidden={!current || undefined}
+                draggable={false}
+                fetchPriority={current ? "high" : undefined}
+                onLoad={current ? constrain : undefined}
+                style={{ transform: item.transform }}
+              />
+            )}
+            {covered && attachment && (
               <GalleryPreview
-                look={look}
+                attachment={attachment}
+                thumbnail={
+                  thumbnail && !failedPreviews.has(thumbnail)
+                    ? thumbnail
+                    : undefined
+                }
                 departing={!current}
-                ready={current && ready}
+                ready={current && decoded}
                 transform={item.transform}
               />
             )}
@@ -509,13 +491,12 @@ export function ImageReviewStage({
             type="button"
             aria-label="Copy image"
             title="Copy image"
-            disabled={!canCopyImage}
+            disabled={!decoded}
             loading={copying}
             onClick={() => void copyImage()}
             icon={<CopyIcon size={17} aria-hidden="true" />}
           />
         )}
-        {pendingVisible && <span role="status">Loading image…</span>}
         {copyNotice && (
           <span role={copyNotice === "error" ? "alert" : "status"}>
             {copyNotice === "success" ? "Image copied" : "Couldn't copy image"}
@@ -567,50 +548,84 @@ export function ImageReviewStage({
   );
 }
 
-/** PROTOTYPE: a stand-in drawn with the original's geometry. */
+/** Stands in for an original until it decodes: its relay thumbnail, else a
+ * frame in its `dim` aspect ratio painted with its blurhash or a flat fill. */
 function GalleryPreview({
-  look,
+  attachment,
+  thumbnail,
   departing,
   ready,
   transform,
 }: {
-  look: Preview;
+  attachment: Attachment;
+  thumbnail: string | undefined;
   departing: boolean;
   ready: boolean;
   transform: string;
 }) {
-  const canvas = useRef<HTMLCanvasElement>(null);
-  const [failed, setFailed] = useState(false);
-  const { width = 0, height = 0, hash } = look.kind === "frame" ? look : {};
-  useLayoutEffect(() => {
-    const element = canvas.current;
-    const context = element?.getContext("2d");
-    if (!element || !context) return;
-    // The fill stays when there is no blurhash or it cannot be painted.
-    context.fillStyle = getComputedStyle(element).color;
-    context.fillRect(0, 0, width, height);
-    if (hash) paintBlurhash(element, hash, width, height);
-  }, [hash, width, height]);
+  const [thumbnailFailed, setThumbnailFailed] = useState(false);
   const shared = {
-    "data-gallery-preview":
-      look.kind === "thumbnail" ? "thumbnail" : look.hash ? "blurhash" : "fill",
     "data-gallery-departing": departing ? "" : undefined,
     "data-gallery-ready": ready ? "" : undefined,
     "data-review-chrome": "",
     "aria-hidden": true,
     style: { transform },
   } as const;
-  if (look.kind === "thumbnail")
-    return failed ? null : (
+  if (thumbnail && !thumbnailFailed)
+    return (
       <img
         {...shared}
-        src={look.source}
+        data-gallery-preview="thumbnail"
+        src={thumbnail}
         alt=""
         draggable={false}
-        onError={() => setFailed(true)}
+        onError={() => setThumbnailFailed(true)}
       />
     );
+  const { width = 0, height = 0 } = attachment.dimensions ?? {};
+  if (!(width > 0 && height > 0)) return null;
   return (
-    <canvas {...shared} ref={canvas} width={look.width} height={look.height} />
+    <PreviewFrame
+      {...shared}
+      width={width}
+      height={height}
+      hash={attachment.blurhash}
+    />
+  );
+}
+
+function PreviewFrame({
+  width,
+  height,
+  hash,
+  ...props
+}: ComponentProps<"canvas"> & {
+  width: number;
+  height: number;
+  hash: string | undefined;
+}) {
+  const canvas = useRef<HTMLCanvasElement>(null);
+  // A raster in the original's ratio, so `object-fit: contain` matches it.
+  const scale = BLURHASH_SIZE / Math.max(width, height);
+  const w = Math.max(1, Math.round(width * scale));
+  const h = Math.max(1, Math.round(height * scale));
+  useLayoutEffect(() => {
+    const element = canvas.current;
+    const context = element?.getContext("2d");
+    if (!element || !context) return;
+    // CSS owns the fill, which stays when there is no blurhash or it cannot
+    // be painted.
+    context.fillStyle = getComputedStyle(element).color;
+    context.fillRect(0, 0, w, h);
+    if (hash) paintBlurhash(element, hash, w, h);
+  }, [hash, w, h]);
+  return (
+    <canvas
+      {...props}
+      ref={canvas}
+      width={w}
+      height={h}
+      data-gallery-preview={hash ? "blurhash" : "fill"}
+    />
   );
 }

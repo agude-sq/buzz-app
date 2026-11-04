@@ -2817,17 +2817,9 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   z-index: 1;
   pointer-events: none;
 }
-.imageReviewStage[data-gallery-loading] > img[data-review-media] {
+/* Never paint a partial original; its preview shows until it has decoded. */
+.imageReviewStage > img[data-gallery-loading] {
   visibility: hidden;
-}
-/* PROTOTYPE (gallery-prototype.ts): loading strategies under comparison. */
-.imageReviewStage[data-gallery-prototype="pending"]
-> img[data-gallery-departing] {
-  transition: opacity var(--duration-state) var(--easing-state);
-}
-.imageReviewStage[data-gallery-prototype="pending"][data-gallery-loading]
-  > img[data-gallery-departing] {
-  opacity: 0.45;
 }
 .imageReviewStage > [data-gallery-preview] {
   position: absolute;
@@ -2838,7 +2830,8 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   object-fit: contain;
   transform-origin: center;
   pointer-events: none;
-  /* No designer-chosen media placeholder role yet; the track fill reads on black. */
+  /* Flat frame fill. No designer-chosen media placeholder role yet; the track
+     fill reads on the black canvas. */
   color: var(--bg-media-track);
   transition: opacity var(--duration-state) var(--easing-state);
 }
@@ -2854,9 +2847,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   opacity: 0;
 }
 @media (prefers-reduced-motion: reduce) {
-  .imageReviewStage > [data-gallery-preview],
-  .imageReviewStage[data-gallery-prototype="pending"]
-    > img[data-gallery-departing] {
+  .imageReviewStage > [data-gallery-preview] {
     transition: none;
   }
 }

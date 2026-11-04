@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { isNativeMediaSource } from "./attachment-source";
+import { attachmentPreview, isNativeMediaSource } from "./attachment-source";
 
 const media = `https://relay.test/media/${"a".repeat(64)}.thumb.jpg`;
 it.each(["buzz-media://localhost", "http://buzz-media.localhost"])(
@@ -25,4 +25,22 @@ it.each([
   "javascript:alert(1)",
 ])("rejects untrusted native lookalike %s", (source) => {
   expect(isNativeMediaSource(source)).toBe(false);
+});
+
+it("previews a gallery image with its signed or relay thumbnail, never the original again", () => {
+  const relay = `https://relay.test/media/${"b".repeat(64)}.png`;
+  const proxy = (url: string, size?: "small") =>
+    url.startsWith("https://relay.test/")
+      ? `/media?url=${encodeURIComponent(size ? url.replace(/\.png$/, ".thumb.jpg") : url)}`
+      : url;
+  const image = { url: relay, kind: "image" } as const;
+  expect(attachmentPreview(image, proxy)).toBe(
+    `/media?url=${encodeURIComponent(relay.replace(/\.png$/, ".thumb.jpg"))}`,
+  );
+  expect(attachmentPreview({ ...image, previewUrl: media }, proxy)).toBe(
+    `/media?url=${encodeURIComponent(media)}`,
+  );
+  expect(
+    attachmentPreview({ url: "https://cdn.test/a.png", kind: "image" }, proxy),
+  ).toBeUndefined();
 });

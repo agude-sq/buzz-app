@@ -1,12 +1,12 @@
 // Records ArrowRight navigation through the gallery-latency fixture: the real
 // thread grid and media viewer over 8 photos, each original delayed separately.
 //
-//   bin/node tests/fixtures/gallery-latency/record.mjs <prototype> [label]
+//   bin/node tests/fixtures/gallery-latency/record.mjs [label]
 //
-// <prototype> is a gallery-prototype.ts value: current, pending, placeholder,
-// thumbnail or thumbnail+preload. Environment:
+// Environment:
 //   PRESS_GAP=380  ms between presses: burst 380, dwell 1500, key repeat 40
 //   REDUCED=1      prefers-reduced-motion
+//   THUMBS=0       relay thumbnails 404, so photos fall back to their frames
 //   BLURHASH=0     omit imeta blurhash, as images sent from this app do
 // Writes test-results/gallery-latency/<label>.{webm,timeline.txt}. Needs
 // `bin/pnpm exec playwright install chromium`; compose.sh needs a full ffmpeg.
@@ -23,13 +23,19 @@ const out = join(repo, "test-results", "gallery-latency");
 const photos = JSON.parse(
   await readFile(new URL("./photos.json", import.meta.url), "utf8"),
 );
-const prototype = process.argv[2] ?? "current";
 const gap = Number(process.env.PRESS_GAP ?? 380);
 const reduced = !!process.env.REDUCED;
+const thumbs = process.env.THUMBS !== "0";
 const blurhash = process.env.BLURHASH !== "0";
 const label =
-  process.argv[3] ??
-  [prototype, reduced && "reduced", !blurhash && "noblurhash", `${gap}ms`]
+  process.argv[2] ??
+  [
+    "gallery",
+    reduced && "reduced",
+    !thumbs && "nothumbs",
+    !blurhash && "noblurhash",
+    `${gap}ms`,
+  ]
     .filter(Boolean)
     .join("-");
 // Original latency per photo (ms). The grid loads 1–4 before the viewer opens.
@@ -67,6 +73,11 @@ const server = await createServer({
           });
           await pause(thumb ? THUMB_DELAY : DELAYS[entry.photo - 1]);
           if (entry.aborted) return;
+          if (thumb && !thumbs) {
+            entry.missing = true;
+            res.writeHead(404).end();
+            return;
+          }
           const body = thumb ? asset.thumb : asset.original;
           res.writeHead(200, {
             "Content-Type": "image/jpeg",
@@ -90,7 +101,7 @@ const context = await browser.newContext({
 const page = await context.newPage();
 const videoStart = Date.now();
 const pageErrors = watchPageErrors(page);
-const search = new URLSearchParams({ galleryPrototype: prototype });
+const search = new URLSearchParams();
 if (!blurhash) search.set("blurhash", "0");
 await page.goto(
   `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/gallery-latency.html?${search}`,
@@ -107,9 +118,6 @@ await pause(600);
 await tiles.first().click();
 const stage = page.getByRole("group", { name: "Image gallery" });
 await stage.waitFor();
-const applied = await stage.getAttribute("data-gallery-prototype");
-if (applied !== prototype)
-  throw new Error(`Stage runs "${applied}", not "${prototype}"`);
 await page.waitForFunction(
   () => !document.querySelector("[data-review-opening], [data-review-pending]"),
 );
@@ -147,7 +155,7 @@ const file = join(out, `${label}.webm`);
 await rename(await video.path(), file);
 const log = requests.map(
   (r) =>
-    `${r.at}ms #${r.photo}${r.thumb ? " thumb" : ""}${r.aborted ? ` (aborted at ${r.aborted}ms)` : ""}`,
+    `${r.at}ms #${r.photo}${r.thumb ? " thumb" : ""}${r.missing ? " (404)" : ""}${r.aborted ? ` (aborted at ${r.aborted}ms)` : ""}`,
 );
 await writeFile(
   join(out, `${label}.timeline.txt`),
@@ -172,15 +180,19 @@ function probe() {
   window.__timeline = log;
   window.__press = () =>
     log.push(`${Math.round(performance.now() - start)}ms PRESS ArrowRight`);
-  const photo = (image) => /%2F(\d)\d{63}/.exec(image?.src ?? "")?.[1] ?? "?";
-  // A preview follows its original in the stage.
+  // Canvas frames carry no source, so their photo shows as "?".
+  const photo = (element) =>
+    /%2F(\d)\d{63}/.exec(element?.src ?? "")?.[1] ?? "?";
+  // A preview covers its original until the original has decoded.
   const show = (image, preview) => {
     const n = photo(image);
     if (preview && !preview.hasAttribute("data-gallery-ready"))
       return `${preview.dataset.galleryPreview} ${n}${preview.complete === false ? " (loading)" : ""}`;
     if (preview && Number(getComputedStyle(preview).opacity) > 0.01)
       return `${preview.dataset.galleryPreview}→photo ${n}`;
-    return image?.complete && image.naturalWidth
+    return image?.complete &&
+      image.naturalWidth &&
+      !image.hasAttribute("data-gallery-loading")
       ? `photo ${n}`
       : `blank (photo ${n} loading)`;
   };
@@ -192,21 +204,21 @@ function probe() {
       const preview = stage.querySelector(
         "[data-gallery-preview]:not([data-gallery-departing])",
       );
-      const gone = stage.querySelector("img[data-gallery-departing]");
-      const opacity = gone ? Number(getComputedStyle(gone).opacity) : 1;
-      const departed = gone
-        ? show(
-            gone,
-            stage.querySelector(
-              "[data-gallery-preview][data-gallery-departing]",
-            ),
-          )
-        : undefined;
-      const shown = !departed
-        ? show(image, preview)
-        : stage.hasAttribute("data-gallery-loading")
-          ? `${departed} (stale${opacity < 0.99 ? `, opacity ${opacity.toFixed(2)}` : ""}; target loading)`
-          : `slide ${departed} → ${show(image, preview)}`;
+      // A photo that left before decoding departs as its preview alone.
+      const original = stage.querySelector(
+        "img[data-gallery-departing]:not([data-gallery-preview])",
+      );
+      const cover = stage.querySelector(
+        "[data-gallery-preview][data-gallery-departing]",
+      );
+      const departed = original
+        ? `photo ${photo(original)}`
+        : cover
+          ? `${cover.dataset.galleryPreview} ${photo(cover)}`
+          : undefined;
+      const shown = departed
+        ? `slide ${departed} → ${show(image, preview)}`
+        : show(image, preview);
       const status = [...stage.querySelectorAll('[role="status"]')]
         .map((element) => element.textContent)
         .filter(Boolean);

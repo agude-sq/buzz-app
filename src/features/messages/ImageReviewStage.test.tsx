@@ -10,12 +10,13 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 vi.mock("@tauri-apps/api/core", async (original) => ({
   ...(await original<typeof import("@tauri-apps/api/core")>()),
   invoke: vi.fn(async () => {}),
 }));
+import type { Attachment } from "../relay/contracts";
 import * as imageCopy from "./image-copy";
 import * as nativeImageCopy from "./native-image-copy";
 import { ImageReviewStage } from "./ImageReviewStage";
@@ -23,10 +24,22 @@ import { ImageReviewStage } from "./ImageReviewStage";
 // jsdom does not implement pointer capture.
 HTMLElement.prototype.setPointerCapture ??= () => {};
 HTMLElement.prototype.releasePointerCapture ??= () => {};
+// jsdom never loads images. Originals start decoded, as when the message grid
+// already showed them; loadingImages() opts out.
+function cachedImages() {
+  vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockReturnValue(true);
+  vi.spyOn(HTMLImageElement.prototype, "naturalWidth", "get").mockReturnValue(
+    1,
+  );
+}
+beforeEach(cachedImages);
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   vi.useRealTimers();
+  Reflect.deleteProperty(HTMLElement.prototype, "animate");
+  Reflect.deleteProperty(HTMLImageElement.prototype, "decode");
 });
 function setup(width = 1000, height = 800) {
   render(
@@ -270,11 +283,17 @@ it("does not re-render the viewer for unchanged resize measurements", () => {
   expect(onRender).toHaveBeenCalledTimes(commits);
 });
 
-function gallery() {
-  const photos = ["one", "two", "three"].map((name) => ({
-    url: `https://fixture.test/${name}.png`,
-    kind: "image" as const,
-  }));
+const photo = (name: string, metadata?: Partial<Attachment>): Attachment => ({
+  url: `https://fixture.test/${name}.png`,
+  kind: "image",
+  ...metadata,
+});
+const thumbnail = ({ url }: Attachment) => url.replace(/\.png$/, ".thumb.jpg");
+
+function gallery(
+  photos = ["one", "two", "three"].map((name) => photo(name)),
+  preview?: (attachment: Attachment) => string | undefined,
+) {
   function Gallery() {
     const [selectedUrl, select] = useState(photos[0]?.url ?? "");
     return (
@@ -285,6 +304,7 @@ function gallery() {
           selectedUrl={selectedUrl}
           select={select}
           media={(url) => url}
+          {...(preview ? { preview } : {})}
           onOpenLink={() => false}
         />
         <input aria-label="Comment" />
@@ -379,10 +399,19 @@ it("leaves arrow keys to the comment editor, modifiers, and other overlays", () 
   expect(screen.getByText("2 / 3")).toBeVisible();
 });
 
-it("slides the retained picture left for next and right for previous, waiting for the incoming image", () => {
+// Originals stay loading, as on a slow connection, until a test settles them.
+function loadingImages() {
   vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockReturnValue(
     false,
   );
+}
+async function decode(image: HTMLElement, decoded = Promise.resolve()) {
+  Object.defineProperty(image, "decode", { value: () => decoded });
+  await act(async () => {
+    fireEvent.load(image);
+  });
+}
+function stubAnimate() {
   const animate = vi.fn(
     (_frames: Keyframe[], _options: KeyframeAnimationOptions) => ({
       cancel: vi.fn(),
@@ -393,95 +422,248 @@ it("slides the retained picture left for next and right for previous, waiting fo
     value: animate,
     configurable: true,
   });
-  try {
-    gallery();
-    const first = screen.getByRole("img");
-    fireEvent.click(screen.getByRole("button", { name: "Next image" }));
-    const second = screen.getByRole("img");
-    expect(first).toBeInTheDocument();
-    expect(first).toHaveAttribute("data-gallery-departing");
-    expect(screen.getByRole("group", { name: "Image gallery" })).toHaveFocus();
-    expect(second.parentElement).toHaveAttribute("data-gallery-loading");
-    expect(animate).not.toHaveBeenCalled();
-    fireEvent.load(second);
-    expect(animate.mock.calls[0]?.[0][1]).toMatchObject({
-      translate: "-40px 0px",
-    });
-    expect(animate.mock.calls[1]?.[0][0]).toMatchObject({
-      translate: "40px 0px",
-    });
-    act(() => animate.mock.results[1]?.value.onfinish?.());
-    expect(first).not.toBeInTheDocument();
-    expect(second.parentElement).not.toHaveAttribute("data-gallery-loading");
-    fireEvent.keyDown(screen.getByRole("group", { name: "Image gallery" }), {
-      key: "ArrowLeft",
-    });
-    const returned = screen.getByRole("img");
-    fireEvent.load(returned);
-    expect(animate.mock.calls[2]?.[0][1]).toMatchObject({
-      translate: "40px 0px",
-    });
-    expect(animate.mock.calls[3]?.[0][0]).toMatchObject({
-      translate: "-40px 0px",
-    });
-    cleanup();
-    expect(animate.mock.results[3]?.value.cancel).toHaveBeenCalled();
-  } finally {
-    Reflect.deleteProperty(HTMLElement.prototype, "animate");
-  }
-});
+  return animate;
+}
+const stage = () => screen.getByRole("group", { name: "Image gallery" });
+const original = () => screen.getByRole("img", { name: "Attachment preview" });
+const arriving = () =>
+  stage().querySelector("[data-gallery-preview]:not([data-gallery-departing])");
 
-it("keeps the last decoded image during rapid gallery changes and cancels pending motion on unmount", () => {
-  vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockReturnValue(
-    false,
+it("slides to the next photo's thumbnail at once and crossfades to its original once decoded", async () => {
+  loadingImages();
+  const assigned = vi.spyOn(HTMLImageElement.prototype, "src", "set");
+  const animate = stubAnimate();
+  const photos = ["one", "two", "three"].map((name) => photo(name));
+  gallery(photos, thumbnail);
+  // Every thumbnail is fetched when the gallery opens.
+  expect(assigned.mock.calls.map(([value]) => value)).toEqual(
+    expect.arrayContaining(photos.map(thumbnail)),
   );
-  const animate = vi.fn();
-  Object.defineProperty(HTMLElement.prototype, "animate", {
-    value: animate,
-    configurable: true,
+  const first = original();
+  await decode(first);
+  expect(arriving()).toHaveAttribute("data-gallery-ready");
+
+  fireEvent.click(screen.getByRole("button", { name: "Next image" }));
+  const second = original();
+  const preview = arriving();
+  expect(second).toHaveAttribute("src", "https://fixture.test/two.png");
+  expect(second).toHaveAttribute("data-gallery-loading");
+  expect(preview).toHaveAttribute("data-gallery-preview", "thumbnail");
+  expect(preview).toHaveAttribute("src", "https://fixture.test/two.thumb.jpg");
+  expect(preview).not.toHaveAttribute("data-gallery-ready");
+  // The slide does not wait for the second original.
+  expect(first).toHaveAttribute("data-gallery-departing");
+  expect(animate.mock.contexts).toEqual([first, second, preview]);
+  expect(animate.mock.calls[0]?.[0][1]).toMatchObject({
+    translate: "-40px 0px",
+    opacity: 0,
   });
-  try {
-    const mounted = gallery();
-    const first = screen.getByRole("img");
-    fireEvent.click(screen.getByRole("button", { name: "Next image" }));
-    fireEvent.click(screen.getByRole("button", { name: "Next image" }));
-    expect(first).toBeInTheDocument();
-    expect(document.querySelectorAll("[data-gallery-departing]")).toHaveLength(
-      1,
-    );
-    const pending = screen.getByRole("img");
-    expect(pending).toHaveAttribute("src", "https://fixture.test/three.png");
-    mounted.unmount();
-    fireEvent.load(pending);
-    expect(animate).not.toHaveBeenCalled();
-  } finally {
-    Reflect.deleteProperty(HTMLElement.prototype, "animate");
-  }
+  for (const call of animate.mock.calls.slice(1))
+    expect(call[0][0]).toMatchObject({ translate: "40px 0px", opacity: 0 });
+  act(() => animate.mock.results[1]?.value.onfinish?.());
+  expect(first).not.toBeInTheDocument();
+
+  // A loaded original shows under its thumbnail until it has decoded.
+  const decoding = deferred<void>();
+  await decode(second, decoding.promise);
+  expect(second).not.toHaveAttribute("data-gallery-loading");
+  expect(preview).not.toHaveAttribute("data-gallery-ready");
+  await act(async () => decoding.resolve());
+  expect(preview).toHaveAttribute("data-gallery-ready");
+
+  fireEvent.keyDown(stage(), { key: "ArrowLeft" });
+  expect(animate.mock.contexts[3]).toBe(second);
+  expect(animate.mock.calls[3]?.[0][1]).toMatchObject({
+    translate: "40px 0px",
+  });
+  expect(animate.mock.calls[4]?.[0][0]).toMatchObject({
+    translate: "-40px 0px",
+  });
+  cleanup();
+  expect(animate.mock.results[4]?.value.cancel).toHaveBeenCalled();
 });
 
-it("changes gallery photos immediately when reduced motion is requested", () => {
+it("shows each photo during rapid navigation, never holding an earlier one", () => {
+  loadingImages();
+  const animate = stubAnimate();
+  const mounted = gallery(undefined, thumbnail);
+  const first = original();
+  fireEvent.click(screen.getByRole("button", { name: "Next image" }));
+  fireEvent.click(screen.getByRole("button", { name: "Next image" }));
+  expect(screen.getByText("3 / 3")).toBeVisible();
+  expect(original()).toHaveAttribute("src", "https://fixture.test/three.png");
+  expect(arriving()).toHaveAttribute(
+    "src",
+    "https://fixture.test/three.thumb.jpg",
+  );
+  // Photos that never loaded leave as their thumbnails.
+  expect(first).not.toBeInTheDocument();
+  expect(
+    Array.from(
+      stage().querySelectorAll("[data-gallery-departing]"),
+      (element) => element.getAttribute("src"),
+    ),
+  ).toEqual(["https://fixture.test/two.thumb.jpg"]);
+  mounted.unmount();
+  expect(animate.mock.results.at(-1)?.value.cancel).toHaveBeenCalled();
+});
+
+it("swaps straight to the next photo's thumbnail when reduced motion is requested", () => {
   vi.stubGlobal(
     "matchMedia",
     vi.fn(() => ({ matches: true })),
   );
-  const animate = vi.fn();
-  Object.defineProperty(HTMLElement.prototype, "animate", {
-    value: animate,
-    configurable: true,
+  loadingImages();
+  const animate = stubAnimate();
+  gallery(undefined, thumbnail);
+  fireEvent.click(screen.getByRole("button", { name: "Next image" }));
+  expect(original()).toHaveAttribute("src", "https://fixture.test/two.png");
+  expect(arriving()).toHaveAttribute(
+    "src",
+    "https://fixture.test/two.thumb.jpg",
+  );
+  expect(document.querySelector("[data-gallery-departing]")).toBeNull();
+  expect(animate).not.toHaveBeenCalled();
+});
+
+it("finishes a slide on resize without revealing a loading original", () => {
+  loadingImages();
+  stubAnimate();
+  gallery(undefined, thumbnail);
+  fireEvent.click(screen.getByRole("button", { name: "Next image" }));
+  expect(stage().querySelector("[data-gallery-departing]")).not.toBeNull();
+  fireEvent(window, new Event("resize"));
+  expect(stage().querySelector("[data-gallery-departing]")).toBeNull();
+  expect(original()).toHaveAttribute("data-gallery-loading");
+  expect(arriving()).not.toHaveAttribute("data-gallery-ready");
+});
+
+it("frames a photo in its own aspect ratio without a thumbnail or after one fails", () => {
+  loadingImages();
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+  const assigned = vi.spyOn(HTMLImageElement.prototype, "src", "set");
+  gallery(
+    [
+      photo("one", {
+        dimensions: { width: 2400, height: 1600 },
+        blurhash: "LEHV6nWB2yk8pyo0adR*.7kCMdnj",
+      }),
+      photo("two", { dimensions: { width: 1600, height: 2400 } }),
+      photo("three"),
+    ],
+    (attachment) =>
+      attachment.url.endsWith("two.png") ? undefined : thumbnail(attachment),
+  );
+  expect(arriving()).toHaveAttribute("data-gallery-preview", "thumbnail");
+  fireEvent.error(arriving() as Element);
+  expect(arriving()).toHaveAttribute("data-gallery-preview", "blurhash");
+  expect(arriving()).toHaveAttribute("width", "32");
+  expect(arriving()).toHaveAttribute("height", "21");
+  fireEvent.click(screen.getByRole("button", { name: "Next image" }));
+  expect(arriving()).toHaveAttribute("data-gallery-preview", "fill");
+  expect(arriving()).toHaveAttribute("width", "21");
+  expect(arriving()).toHaveAttribute("height", "32");
+  // A thumbnail that failed to prefetch is not requested again.
+  const prefetch = assigned.mock.contexts[
+    assigned.mock.calls.findIndex(
+      ([value]) => value === "https://fixture.test/three.thumb.jpg",
+    )
+  ] as HTMLImageElement;
+  fireEvent.error(prefetch);
+  fireEvent.click(screen.getByRole("button", { name: "Next image" }));
+  expect(arriving()).toBeNull();
+  expect(original()).toHaveAttribute("src", "https://fixture.test/three.png");
+});
+
+it("copies and click-zooms only a decoded original", async () => {
+  loadingImages();
+  const copy = stubImageCopy();
+  copyGallery();
+  const image = original();
+  Object.defineProperties(image, {
+    naturalWidth: { value: 100 },
+    naturalHeight: { value: 100 },
   });
-  try {
-    gallery();
-    fireEvent.click(screen.getByRole("button", { name: "Next image" }));
-    expect(screen.getByRole("img")).toHaveAttribute(
-      "src",
-      "https://fixture.test/two.png",
-    );
-    expect(document.querySelector("[data-gallery-departing]")).toBeNull();
-    expect(animate).not.toHaveBeenCalled();
-  } finally {
-    vi.unstubAllGlobals();
-    Reflect.deleteProperty(HTMLElement.prototype, "animate");
-  }
+  vi.spyOn(stage(), "getBoundingClientRect").mockReturnValue(
+    new DOMRect(0, 0, 500, 400),
+  );
+  const button = screen.getByRole("button", { name: "Copy image" });
+  expect(button).toBeDisabled();
+  press(image, { x: 250, y: 200 });
+  expect(percent()).toBe("100%");
+
+  await decode(image);
+  expect(button).toBeEnabled();
+  press(image, { x: 250, y: 200 });
+  expect(percent()).toBe("200%");
+  await act(async () => {
+    fireEvent.click(button);
+  });
+  expect(copy).toHaveBeenCalledWith(image);
+
+  fireEvent.click(screen.getByRole("button", { name: "Next image" }));
+  expect(screen.getByRole("button", { name: "Copy image" })).toBeDisabled();
+});
+
+// Preload requests are the `src` assignments to images outside the stage.
+function warming() {
+  loadingImages();
+  Object.defineProperty(HTMLImageElement.prototype, "decode", {
+    configurable: true,
+    value: () => Promise.resolve(),
+  });
+  const assigned = vi.spyOn(HTMLImageElement.prototype, "src", "set");
+  const url = (name: string) => `https://fixture.test/${name}.png`;
+  gallery(["one", "two", "three", "four", "five"].map((name) => photo(name)));
+  const warmers = () =>
+    assigned.mock.calls.flatMap(([value], index) => {
+      const image = assigned.mock.contexts[index] as HTMLImageElement;
+      return value && !image.hasAttribute("data-review-media")
+        ? [{ value, image }]
+        : [];
+    });
+  const warmer = (name: string) => {
+    const found = warmers().find(({ value }) => value === url(name));
+    if (!found) throw new Error(`${name} was not preloaded`);
+    return found.image;
+  };
+  return {
+    url,
+    warmer,
+    requested: () =>
+      warmers().map(({ value }) => value.replace(/^.*\/(\w+)\.png$/, "$1")),
+    settle: (...names: string[]) =>
+      act(async () => {
+        for (const name of names) fireEvent.load(warmer(name));
+      }),
+  };
+}
+
+it("warms the next two originals in the direction of travel and the previous one, two at a time", async () => {
+  const { requested, warmer, settle } = warming();
+  expect(original()).toHaveAttribute("fetchpriority", "high");
+  expect(requested()).toEqual(["two", "three"]);
+  expect(warmer("two").fetchPriority).toBe("low");
+  fireEvent.click(screen.getByRole("button", { name: "Next image" }));
+  // One keeps loading as the previous photo, so four waits for a free slot.
+  expect(requested()).toEqual(["two", "three"]);
+  await settle("two", "three");
+  expect(requested()).toEqual(["two", "three", "four"]);
+});
+
+it("cancels originals that leave the window, including a photo visited before it loaded", async () => {
+  const { url, requested, warmer, settle } = warming();
+  const first = original();
+  fireEvent.click(screen.getByRole("button", { name: "Next image" }));
+  await settle("two", "three");
+  expect(first).toHaveAttribute("src", url("one"));
+  fireEvent.click(screen.getByRole("button", { name: "Next image" }));
+  expect(first).toHaveAttribute("src", "");
+  expect(requested()).toEqual(["two", "three", "four", "five"]);
+  fireEvent.click(screen.getByRole("button", { name: "Previous image" }));
+  for (const name of ["four", "five"])
+    expect(warmer(name)).toHaveAttribute("src", "");
+  expect(requested().at(-1)).toBe("one");
 });
 
 function deferred<T>() {
@@ -580,6 +762,7 @@ it("offers native copy independently of browser clipboard support", async () => 
 
   cleanup();
   vi.restoreAllMocks();
+  cachedImages();
   const supportedBroker = stubImageCopy({ supported: true });
   setup();
   fireEvent.click(screen.getByRole("button", { name: "Copy image" }));

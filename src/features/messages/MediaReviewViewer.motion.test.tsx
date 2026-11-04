@@ -407,9 +407,12 @@ it.each([false, true])(
     const dialog = screen.getByRole("dialog");
     const image = dialog.querySelector("img") as HTMLImageElement;
     expect(dialog).toHaveAttribute("data-review-pending");
+    expect(image).toHaveAttribute("data-gallery-loading");
     expect(opener).not.toHaveStyle({ opacity: "0" });
     expect(animate).not.toHaveBeenCalled();
     fireEvent.load(image);
+    // The picture that grows from the chat photo is no longer hidden.
+    expect(image).not.toHaveAttribute("data-gallery-loading");
     expect(dialog).not.toHaveAttribute("data-review-pending");
     expect(dialog).toHaveAttribute("data-review-opening");
     expect(opener).toHaveStyle({ opacity: "0" });
