@@ -1,6 +1,9 @@
 import { useSoloRowActivation } from "./useSoloRowActivation";
 import { useSoloNavigation } from "./solo-navigation-react";
 import {
+  useCallback,
+  useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -16,7 +19,10 @@ import { useWorkingAgents } from "../../bundled/channels/useWorkingAgents";
 import { WorkingAgentsBadge } from "../../bundled/channels/WorkingAgentsBadge";
 import { UnreadBadge } from "../../bundled/channels/UnreadBadge";
 import { useUnreadChannelIds } from "../../bundled/channels/useSidebarFilters";
-import { SoloWorkspaces } from "../../bundled/channels/SoloWorkspaces";
+import {
+  SoloWorkspaces,
+  type ChatListItem,
+} from "../../bundled/channels/SoloWorkspaces";
 import {
   soloSharedMarkId,
   useSharedWithPeople,
@@ -118,7 +124,10 @@ export function SoloInventory({
     chatMenus?.subscribe ?? noSubscription,
     () => chatMenus?.snapshot(),
   );
-  const workingChannels = new Set<string>(JSON.parse(workingIds));
+  const workingChannels = useMemo(
+    () => new Set<string>(JSON.parse(workingIds)),
+    [workingIds],
+  );
   const open = (channelId: string) =>
     navigator.open(conversationTarget(scope, channelId));
   const openMessage = (channelId: string, messageId?: string) => {
@@ -152,6 +161,52 @@ export function SoloInventory({
         handoff.activityAgent.current = undefined;
     });
   };
+  // Rows call the latest handlers, so the row renderer changes only with
+  // what the rows show.
+  const rowActions = useRef({ open, openMessage, openAgentActivity });
+  useLayoutEffect(() => {
+    rowActions.current = { open, openMessage, openAgentActivity };
+  });
+  const renderChat = useCallback(
+    (
+      item: ChatListItem,
+      rename: (() => boolean) | undefined,
+      channel: ChannelSummary | undefined,
+    ) => (
+      <SoloConversationRow
+        key={item.id}
+        session={session}
+        navigation={navigator}
+        pendingClick={pendingClick}
+        id={item.id}
+        channel={channel}
+        title={item.title}
+        selected={selected === item.id}
+        working={workingChannels.has(item.id)}
+        Icon={ChatIcon}
+        onSelect={() => void rowActions.current.open(item.id)}
+        onRename={rename}
+        onOpenThread={(thread) =>
+          rowActions.current.openMessage(thread.channelId, thread.rootId)
+        }
+        onOpenWorkingAgent={(id, _agent, messageId) => {
+          if (messageId) rowActions.current.openMessage(id, messageId);
+          else void rowActions.current.open(id);
+        }}
+        onOpenAgentActivity={(channelId, agent) =>
+          rowActions.current.openAgentActivity(channelId, agent)
+        }
+      />
+    ),
+    [session, navigator, selected, workingChannels, ChatIcon],
+  );
+  const renderChatMenu = useCallback(
+    (channelId: string) =>
+      menus?.map(({ key, component: Menu }) => (
+        <Menu key={key} session={session} channelId={channelId} />
+      )),
+    [menus, session],
+  );
   const conversations = list.channels
     // Solo chats the viewer belongs to: their own and those shared with them.
     // Opening one from a link without membership adds nothing here.
@@ -248,11 +303,7 @@ export function SoloInventory({
         />
       )}
       <SoloWorkspaces
-        renderChatMenu={(channelId) =>
-          menus?.map(({ key, component: Menu }) => (
-            <Menu key={key} session={session} channelId={channelId} />
-          ))
-        }
+        renderChatMenu={renderChatMenu}
         navigator={navigator}
         draft={
           draft
@@ -299,32 +350,7 @@ export function SoloInventory({
             unreadChats.has(item.id),
         }))}
         onNew={newChat}
-        renderChat={(item, rename) => (
-          <SoloConversationRow
-            key={item.id}
-            session={session}
-            navigation={navigator}
-            pendingClick={pendingClick}
-            id={item.id}
-            channel={conversations.find(
-              (conversation) => conversation.id === item.id,
-            )}
-            title={item.title}
-            selected={selected === item.id}
-            working={workingChannels.has(item.id)}
-            Icon={ChatIcon}
-            onSelect={() => void open(item.id)}
-            onRename={rename}
-            onOpenThread={(thread) =>
-              openMessage(thread.channelId, thread.rootId)
-            }
-            onOpenWorkingAgent={(id, _agent, messageId) => {
-              if (messageId) openMessage(id, messageId);
-              else void open(id);
-            }}
-            onOpenAgentActivity={openAgentActivity}
-          />
-        )}
+        renderChat={renderChat}
       />
       {list.status === "loading" && <p role="status">Loading conversations…</p>}
       {list.status === "error" && !rosterRecovers && (

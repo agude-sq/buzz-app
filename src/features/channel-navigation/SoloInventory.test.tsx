@@ -309,6 +309,37 @@ it("keeps the open, unread and working chats listed past a workspace's cap", () 
   expect(listed()).not.toContain("newer-8");
 });
 
+it("renders again only the Solo row whose chat changed", () => {
+  const renders = new Map<string, number>();
+  const icons: readonly Contribution<ChatIcon>[] = [
+    {
+      id: "render-count",
+      key: "test/render-count",
+      pluginId: "test",
+      revision: "one",
+      component: ({ channelId, fallback }) => {
+        renders.set(channelId, (renders.get(channelId) ?? 0) + 1);
+        return fallback;
+      },
+    },
+  ];
+  const f = fixture(false, false, undefined, undefined, 0, {
+    snapshot: () => icons,
+    subscribe: () => () => {},
+  });
+  expect(renders.get(id)).toBeGreaterThan(0);
+  renders.clear();
+  f.roster((channels) =>
+    channels.map((channel) =>
+      channel.id === other ? { ...channel, name: "Renamed" } : channel,
+    ),
+  );
+  expect(screen.getByRole("button", { name: /^Renamed/ })).toBeInTheDocument();
+  expect(renders.get(other)).toBeGreaterThan(0);
+  // Planning's chat did not change, so its row did not render again.
+  expect(renders.has(id)).toBe(false);
+});
+
 it("describes a Solo row as Shared only when its Shared mark renders", () => {
   fixture();
   expect(screen.getByRole("button", { name: /^Planning/ })).not.toHaveAttribute(
