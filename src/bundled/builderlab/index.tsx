@@ -10,19 +10,10 @@ import {
   browserCredential,
   browserLoginAvailable,
   oauthTarget,
-  onCredentialSaved,
-  restoredCredential,
-  savedCredential,
 } from "./oauth/browser";
 import { brokerBuilderlab, createDevSession } from "./dev-session";
 import { createOAuthSession } from "./oauth/session";
-import {
-  autoBuilderlab,
-  createAutoSession,
-  createNativeSession,
-  nativeBuilderlab,
-  offeredSignIn,
-} from "./session";
+import { createNativeSession, nativeBuilderlab } from "./session";
 import { createAgentClient } from "./agents/client";
 import { RemoteAgents } from "./agents/RemoteAgents";
 import { builderlabType } from "./adapter-type";
@@ -49,7 +40,7 @@ export const inject = [
   "knownCommunities",
   "decisions",
   "navigation",
-  ...(nativeBuilderlab() || autoBuilderlab() ? ["federatedIdentity"] : []),
+  ...(nativeBuilderlab() ? ["federatedIdentity"] : []),
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
   let unavailable = "";
@@ -86,44 +77,20 @@ export const apply: PluginModule["apply"] = (ctx) => {
               .catch(() => {});
           },
           ctx.host,
-          // The desktop app keeps the sign-in in the OS secure store.
-          browserLoginAvailable() && !unavailable
-            ? {
-                restore: (signal) => restoredCredential(ctx.host, signal),
-                save: (credential) => savedCredential.save(credential.value),
-                clear: () => savedCredential.clear(),
-                watch: onCredentialSaved,
-              }
-            : undefined,
         );
   const session =
-    dev?.session ??
-    (legacy && autoBuilderlab()
-      ? createAutoSession(
-          createNativeSession(ctx.federatedIdentity),
-          legacy,
-          () =>
-            offeredSignIn(() =>
-              ctx.host.request({
-                url: `${oauthTarget()}/v1/session`,
-                method: "GET",
-                headers: { Accept: "application/json" },
-              }),
-            ),
-          ctx.federatedIdentity,
-        )
-      : (legacy ?? createNativeSession(ctx.federatedIdentity)));
+    dev?.session ?? legacy ?? createNativeSession(ctx.federatedIdentity);
   ctx.effect(() => () => session.dispose());
   const loginAvailable = (!!dev || browserLoginAvailable()) && !unavailable;
   const openSettings = (section: string) =>
     void ctx.navigation.open({ version: 1, kind: "settings", section });
   // An FI build signs out where its shared organization sign-in is managed.
-  const openIdentity = !(nativeBuilderlab() || autoBuilderlab())
+  const openIdentity = !nativeBuilderlab()
     ? undefined
     : () => openSettings("identity");
   applyApps(ctx, session, loginAvailable, legacy, dev?.apps);
   const handoff = (signedIn: boolean) =>
-    legacy && !session.snapshot().federated
+    legacy
       ? handoffBackupSession(
           "builderlab",
           signedIn ? legacy.credential().value : null,

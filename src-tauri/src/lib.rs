@@ -52,7 +52,6 @@ use nsec_backup::{
     nsec_restore_wait, NsecBackupHost,
 };
 use nsec_backup_choice::{nsec_backup_choice, nsec_backup_set_choice};
-mod builderlab_session;
 mod clipboard;
 mod jev;
 mod keep_awake;
@@ -776,9 +775,6 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         jev::jev_classifier_status,
         jev::jev_classifier_set_key,
         jev::jev_classifier_clear_key,
-        builderlab_session::builderlab_session_load,
-        builderlab_session::builderlab_session_save,
-        builderlab_session::builderlab_session_clear,
         agent_state::app_agent_state_load,
         agent_state::app_agent_state_set,
         decisions::decide,

@@ -207,12 +207,8 @@ agents are not migrated into this type.
 
 The plugin's server is the build's Builderlab: its first
 [sign-in server](../../../docs/configuration.md#federated-identity-build-input),
-the built-in `https://app.builderlab.xyz` unless the build adds another. An
-added server's native session is its only sign-in. The built-in server's is used
-when it exists or `v1/session` offers it (any status but 404). On a 404 the
-plugin uses the browser sign-in below and keeps its credential in the system
-keychain; a network error or 5xx is a retryable error, never that fallback. Both
-survive a restart. A build without a sign-in server uses
+the built-in `https://app.builderlab.xyz` unless the build adds another, whose
+native session it uses and which survives a restart. A build without one uses
 the `BUZZ_BUILDERLAB_URL` [build input](../../../docs/configuration.md#builderlab-url-build-input)
 as its server address, appends `/api/goose`, and keeps its sign-in in memory.
 

@@ -125,8 +125,9 @@ it("adds the app tools only for a tenant with an Apps control plane", async () =
   );
 });
 
-it("calls through the NIP-FI session while it is in use, never as the browser sign-in", async () => {
-  const { ctx, respond, session: browser } = await setup();
+it("calls through the NIP-FI session in an FI build, which has no browser sign-in", async () => {
+  const { ctx, respond, session } = await setup();
+  vi.stubEnv("VITE_BUZZ_FEDERATED_IDENTITY", "1");
   const tools = new Map<string, AddedTool>();
   ctx.agents.addTool = (tool: AddedTool) => tools.set(tool.name, tool);
   const request = vi.fn(async ({ path }: { path: string }) =>
@@ -136,17 +137,10 @@ it("calls through the NIP-FI session while it is in use, never as the browser si
         : { apps: [] },
     ),
   );
-  const federated = {
-    ...browser,
-    snapshot: () => ({ ...browser.snapshot(), federated: true }),
-  };
-  applyApps(
-    { ...ctx, federatedIdentity: { request } } as never,
-    federated,
-    true,
-    browser,
-  );
-  await (tools.get("apps_list") as AddedTool).call({} as BuzzClient, {}, {});
+  applyApps({ ...ctx, federatedIdentity: { request } } as never, session, true);
+  await expect(
+    (tools.get("apps_list") as AddedTool).call({} as BuzzClient, {}, {}),
+  ).resolves.toBe(JSON.stringify({ apps: [] }, null, 2));
   await (tools.get("apps_deploy") as AddedTool).call(
     {} as BuzzClient,
     {},
@@ -154,23 +148,21 @@ it("calls through the NIP-FI session while it is in use, never as the browser si
   );
   expect(respond).not.toHaveBeenCalled();
   // Native adds the session; the renderer sends none of its own.
+  const headers = {
+    Accept: "application/json",
+    "X-Hotpod-Agent-Client-Version": "0.2.0",
+  };
   expect(request).toHaveBeenCalledWith({
     apps: true,
     path: "/v1/agent/apps?scope=owned",
     method: "GET",
-    headers: {
-      Accept: "application/json",
-      "X-Hotpod-Agent-Client-Version": "0.2.0",
-    },
+    headers,
   });
   expect(request).toHaveBeenCalledWith({
     apps: true,
     path: "/v1/agent/apps/demo/deploy",
     method: "POST",
-    headers: {
-      Accept: "application/json",
-      "X-Hotpod-Agent-Client-Version": "0.2.0",
-    },
+    headers,
     upload: {
       field: "artifact",
       path: "/Users/me/a.tar.gz",
@@ -178,19 +170,6 @@ it("calls through the NIP-FI session while it is in use, never as the browser si
       contentType: "application/gzip",
     },
   });
-});
-
-it("offers the tools in an FI build, which has no browser sign-in", async () => {
-  const { ctx, session } = await setup();
-  vi.stubEnv("VITE_BUZZ_FEDERATED_IDENTITY", "1");
-  const tools = new Map<string, AddedTool>();
-  ctx.agents.addTool = (tool: AddedTool) => tools.set(tool.name, tool);
-  const request = vi.fn(async () => json({ apps: [] }));
-  applyApps({ ...ctx, federatedIdentity: { request } } as never, session, true);
-  await expect(
-    (tools.get("apps_list") as AddedTool).call({} as BuzzClient, {}, {}),
-  ).resolves.toBe(JSON.stringify({ apps: [] }, null, 2));
-  expect(request).toHaveBeenCalledOnce();
 });
 
 it("returns once the deployed version serves", async () => {

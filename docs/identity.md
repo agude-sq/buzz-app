@@ -16,28 +16,12 @@ wireframes. When a page replaces another, focus moves to the new page's
 heading unless the page focuses a field itself, and **Back** returns focus to
 the choice that opened the page.
 
-With only the built-in sign-in server (see
-[configuration](configuration.md#federated-identity-build-input)), each
-Builderlab sign-in first sends an uncredentialed `GET {adapterBase}/v1/session`.
-A 404 means the server has no NIP-FI sign-in, so **Sign in with Builderlab** is
-the browser sign-in above. First run saves its credential in the same system
-keychain item the plugin restores, so the plugin is signed in at once and after
-a restart (deleted on sign-out or when Builderlab rejects it at launch). The
-item is the profile's for this build's Builderlab deployment, its origin and
-API base, so a build for another Builderlab never reads, sends or deletes it.
-A save that fails is a retryable sign-in error, and a sign-out stays unfinished
-until the item is deleted. Once a NIP-FI session exists it is the sign-in in
-use, even while its account is loading or failing, and the browser sign-in is
-signed out, revoked and deleted. Builderlab Decisions and the Apps agent tools
-follow whichever sign-in is in use. Any other answer means NIP-FI sign-in, as below; a network error or
-5xx shows the retryable sign-in error and never falls back to the browser. The
-plugin uses the server's native session whenever one exists, such as after a
-community that requires NIP-FI asked for sign-in, and the browser credential
-otherwise, so it holds both grants.
-
-In builds that add a sign-in server, the bundled Builderlab plugin has no
-network grant of its own: its Builderlab calls go through the native FI session
-(#1461). There, **Sign in with Builderlab** is always the native [organization sign-in](#native-federated-session-module), whose browser
+In builds with a sign-in server, which is every build unless it opts out or
+names another Builderlab deployment (see
+[configuration](configuration.md#federated-identity-build-input)), the
+bundled Builderlab plugin has no network grant of its own: its Builderlab calls
+go through the native FI session (#1461). There, **Sign in with Builderlab** is the
+native [organization sign-in](#native-federated-session-module), whose browser
 step, code exchange and token stay native. A session that already exists,
 including one saved by an earlier run, signs in again, so the browser can
 choose the account; if that sign-in is canceled, first run stops rather than

@@ -16,8 +16,7 @@ they use every day. It is not meant to merge.
   hash, so it gets an origin that no other branch in the same checkout uses.
   Don't pass `--port`.
 - **Keychain:** every item is under `xyz.block.buzz.desktop.onboarding-test.*`.
-  That covers the identity, agent keys, federated sessions, the saved Builderlab
-  browser sign-in and the TypeSafe key.
+  That covers the identity, agent keys, federated sessions and the TypeSafe key.
   The pre-1.0 services it falls back to are renamed too
   (`dev.local.buzz.foundation.onboarding-test.*`), so it can never pick up your
   real key. The same rename gives it its own nsec backups folder and sign-out

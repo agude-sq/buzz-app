@@ -131,16 +131,6 @@ fn main() {
     println!("cargo:rerun-if-env-changed={FI}");
     println!("cargo:rerun-if-env-changed={DEV_VIEWER}");
     let fi = federated_identity(&local, process);
-    // Whether that server is one the build adds (so Builderlab is NIP-FI
-    // only) rather than the built-in one (so its plugin can use either).
-    println!(
-        "cargo:rustc-env=BUZZ_BUILD_FEDERATED_IDENTITY_ADDED={}",
-        if process(FI).is_some_and(|raw| !raw.is_empty()) {
-            "1"
-        } else {
-            ""
-        }
-    );
     println!(
         "cargo:rustc-env={FI}={}",
         fi.as_ref()

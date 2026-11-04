@@ -178,14 +178,8 @@ export default defineConfig(async ({ command, mode }) => {
         externalMcpCommunities,
       ),
       "import.meta.env.VITE_BUZZ_BUILDERLAB_URL": JSON.stringify(builderlabUrl),
-      // "1": a server the build adds, NIP-FI only. "auto": the built-in
-      // server, whose Builderlab sign-in may be NIP-FI or the browser's.
       "import.meta.env.VITE_BUZZ_FEDERATED_IDENTITY": JSON.stringify(
-        federatedUrl === undefined
-          ? "0"
-          : process.env.BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG
-            ? "1"
-            : "auto",
+        federatedUrl === undefined ? "0" : "1",
       ),
       "import.meta.env.VITE_BUZZ_BUILDERLAB_APPS_DOMAIN":
         JSON.stringify(env.BUZZ_BUILDERLAB_APPS_DOMAIN) ?? "undefined",

@@ -922,24 +922,15 @@ mod tests {
         let manager =
             buzzodz_plugins::Manager::open(Some(temp.path().into()), "test", false).unwrap();
         let grants = manager.host_grants("block.builderlab", "bundled").unwrap();
-        // A server the build adds joins the built-in one at the list's end.
-        let added = option_env!("BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG")
-            .and_then(|c| serde_json::from_str::<Vec<serde_json::Value>>(c).ok())
-            .is_some_and(|servers| servers.len() > 1);
-        if added {
-            // Builds that add a server reach Builderlab only through the
-            // native forwarder.
+        if option_env!("BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG").is_some_and(|c| !c.is_empty()) {
+            // FI builds reach Builderlab only through the native forwarder.
             assert!(grants
                 .federated_identity
                 .is_some_and(|grant| !grant.operations.is_empty()));
             assert!(!grants.files && grants.network_origins.is_empty());
             return;
         }
-        // The built-in server keeps the forwarder beside the browser origins.
-        assert_eq!(
-            grants.federated_identity.is_some(),
-            option_env!("BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG").is_some_and(|c| !c.is_empty())
-        );
+        assert!(grants.federated_identity.is_none());
         assert_eq!(
             grants.files,
             buzzodz_plugins::apps_control_plane(buzzodz_plugins::BUILDERLAB_ORIGIN).is_some()

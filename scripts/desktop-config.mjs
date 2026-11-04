@@ -61,8 +61,8 @@ const PRODUCTION_BUILDERLAB_URL = "https://app.builderlab.xyz";
 // Empty counts as unset, except BUZZ_BUILDERLAB_URL, where empty disables it.
 // With no FI descriptor the build compiles only the built-in bb-public server
 // (`federated_identity/built-in-server.json`), so onboarding, the Builderlab
-// plugin and communities share one saved sign-in. An added descriptor would
-// put another server first, so it is refused like any other override.
+// plugin and communities share its one NIP-FI session. An added descriptor
+// would put another server first, so it is refused like any other override.
 export const NON_PRODUCTION = [
   "BUZZ_DEV_VIEWER",
   "BUZZ_DEV_CREDENTIAL_HELPER",

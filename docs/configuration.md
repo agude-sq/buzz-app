@@ -95,12 +95,8 @@ BUZZ_BUILDERLAB_URL=https://app.builderlab.xyz bin/pnpm tauri build
 
 Builderlab is the build's first sign-in server below: its identity origin with
 `apiBasePath` less its `/api/goose/` suffix (another API base leaves Builderlab
-unconfigured). A server the build adds signs in with its native session. The
-built-in server signs in with its native session only when its
-`v1/session` answers with a status other than 404, and on a 404 with the browser
-sign-in (`/v1/auth/login`); a network error or 5xx is a retryable error, never
-the browser sign-in. Both are kept in the system keyring and survive a restart
-(see [identity](identity.md)). Unset or set to
+unconfigured), and sign-in uses that server's native session, which is kept in
+the system keyring and survives a restart. Unset or set to
 `https://app.builderlab.xyz`, `BUZZ_BUILDERLAB_URL` keeps the built-in server.
 Another origin, or an empty value, turns it off when nothing is added, and the
 bundled Builderlab plugin keeps its own in-memory login against this origin.

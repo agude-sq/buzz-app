@@ -166,11 +166,10 @@ it("keeps the development broker's Builderlab sign-in for a pinned viewer withou
     };
     // Pinned dev server: broker live, native NIP-FI off, as on main.
     expect(await define(viewer, "serve")).toEqual(['"1"', '"0"']);
-    // Unpinned dev server and any vanilla build: the built-in server, whose
-    // Builderlab sign-in is NIP-FI only where the server offers it.
-    expect(await define("", "serve")).toEqual(['"0"', '"auto"']);
-    expect(await define(viewer, "build")).toEqual(['"0"', '"auto"']);
-    // An added server wins over the broker and is NIP-FI only.
+    // Unpinned dev server and any build: the built-in NIP-FI server.
+    expect(await define("", "serve")).toEqual(['"0"', '"1"']);
+    expect(await define(viewer, "build")).toEqual(['"0"', '"1"']);
+    // An added server wins over the broker.
     vi.stubEnv(
       "BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG",
       '{"identityOrigin":"https://block.builderlab.xyz","apiBasePath":"/api/goose/"}',

@@ -65,7 +65,6 @@ for service in \
   "$id.identity.debug" "$id.identity" \
   "$id.jev-key.debug" "$id.jev-key" \
   "$id.federated-session.debug" "$id.federated-session" \
-  "$id.builderlab-session.debug" "$id.builderlab-session" \
   "$id.agents" \
   "$store.identity.debug" "$store.identity" \
   "$store.jev-key.debug" "$store.jev-key" \

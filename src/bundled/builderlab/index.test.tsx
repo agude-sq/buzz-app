@@ -60,8 +60,6 @@ beforeEach(() => {
   // jsdom lacks it; the agent form reveals a failed setup's error with it.
   Element.prototype.scrollIntoView = () => {};
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
-  // Native commands a test does not answer settle empty: no saved sign-in.
-  native.invoke.mockResolvedValue(null);
   vi.stubGlobal("navigator", {
     platform: "MacIntel",
     locks: {
@@ -200,7 +198,6 @@ it.each([undefined, false, true])(
       if (command === "oauth_callback_wait")
         return { parameters: [["code", "one-time"]] };
       if (command === "oauth_callback_cancel") return;
-      if (command.startsWith("builderlab_session_")) return null;
       if (command !== "plugin_host_request") return;
       const { url } = input.request;
       return {
@@ -345,8 +342,6 @@ it.each([true, false])(
       if (command === "oauth_callback_wait")
         return { parameters: [["code", "synthetic-code"]] };
       if (command === "oauth_callback_cancel") return;
-      if (command.startsWith("builderlab_session_")) return null;
-      if (command.startsWith("builderlab_session_")) return null;
       if (command !== "plugin_host_request")
         throw new Error(`Unexpected command ${command}`);
       const { url } = input.request;
@@ -632,7 +627,6 @@ it.each([
     if (command === "oauth_callback_wait")
       return loginCallback?.promise ?? { parameters: [["code", "one-time"]] };
     if (command === "oauth_callback_cancel") return;
-    if (command.startsWith("builderlab_session_")) return null;
     if (command === "identity_restore") return community.viewer;
     if (command === "identity_prepare_remote_agent_authorization")
       return ["auth", community.viewer, "", "ef".repeat(64)];

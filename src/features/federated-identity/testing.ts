@@ -64,7 +64,6 @@ export function federatedFixture(
         email: null,
       });
     }),
-    restore: vi.fn(async () => state),
     request: vi.fn(
       async (_input: AuthenticatedRequest): Promise<HostResponse> => {
         throw new Error("Fixture response required");

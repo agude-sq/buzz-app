@@ -12,11 +12,7 @@ import {
 } from "./decisions";
 import type { Credential } from "./oauth/browser";
 import { createOAuthSession } from "./oauth/session";
-import {
-  createAutoSession,
-  type BuilderlabSession,
-  type LoginSnapshot,
-} from "./session";
+import type { BuilderlabSession } from "./session";
 
 const credential = (value: string): Credential => ({
   value,
@@ -256,81 +252,4 @@ it("offers Builderlab only while the signed-in account may use decisions", async
   await flush();
   expect(keys()).toEqual([]);
   expect(decide).not.toHaveBeenCalled();
-});
-
-it("follows the sign-in in use: the browser's credential, then the NIP-FI session's revision", async () => {
-  const root = new Context();
-  root.provide("pluginStatus", {
-    isActive: () => true,
-    subscribe: () => () => {},
-  });
-  const decisions = new DecisionsService(root, undefined);
-  const browser = createOAuthSession(async () => credential("browser"));
-  let nativeState: LoginSnapshot = { status: "signed-out" };
-  const listeners = new Set<() => void>();
-  const native = {
-    snapshot: () => nativeState,
-    subscribe(listener: () => void) {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    credential: () => ({
-      revision: "fi-revision",
-      storage: "",
-      account: credential("x").account,
-    }),
-    dispose() {},
-  } as unknown as BuilderlabSession;
-  const setNative = (next: LoginSnapshot) => {
-    nativeState = next;
-    for (const listener of listeners) listener();
-  };
-  const identity = {
-    snapshot: () => ({ status: nativeState.status }),
-    subscribe: native.subscribe,
-  } as never;
-  const session = createAutoSession(
-    native,
-    browser,
-    async () => "browser",
-    identity,
-  );
-  const decide = vi.fn<BuilderlabDecide>(async () => ({
-    outcome: "answered",
-    backend: "builderlab",
-    model: "builderlab-1",
-    answers: { a: { type: "yes_no", probability: 0.7 } },
-  }));
-  const fiber = root
-    .extend({ pluginOwner: { id: "block.builderlab", revision: "one" } })
-    .plugin((ctx) => offerBuilderlabDecisions(ctx, session, true, decide));
-  await fiber.await();
-  await flush();
-  const keys = () => decisions.providers().map((provider) => provider.key);
-  const provider = builderlabProvider(session, true, decide);
-  await session.signIn();
-  expect(keys()).toEqual(["block.builderlab/builderlab"]);
-  await expect(provider.decide(request, { signal })).resolves.toMatchObject({
-    outcome: "answered",
-  });
-  expect(decide).toHaveBeenLastCalledWith(
-    request,
-    expect.objectContaining({ value: "browser" }),
-  );
-  // A community's NIP-FI sign-in takes over: Decisions stays, and native is
-  // handed that session's credential, never the retired browser one.
-  setNative({ status: "signed-in", account: credential("x").account });
-  expect(keys()).toEqual(["block.builderlab/builderlab"]);
-  await expect(provider.decide(request, { signal })).resolves.toMatchObject({
-    outcome: "answered",
-  });
-  expect(decide).toHaveBeenLastCalledWith(
-    request,
-    expect.objectContaining({ revision: "fi-revision" }),
-  );
-  // Taking over retired the browser sign-in, so it does not come back.
-  setNative({ status: "signed-out" });
-  expect(browser.snapshot().status).toBe("signed-out");
-  expect(keys()).toEqual([]);
-  await fiber.dispose();
 });

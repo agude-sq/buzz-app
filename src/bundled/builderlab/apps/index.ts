@@ -6,11 +6,7 @@ import type { PluginModule } from "../../../plugins/api";
 import type { PanelProps } from "../../../features/panels/service";
 import type { Host } from "../../../features/host/service";
 import type { OAuthSession } from "../oauth/session";
-import {
-  autoBuilderlab,
-  nativeBuilderlab,
-  type BuilderlabSession,
-} from "../session";
+import { nativeBuilderlab, type BuilderlabSession } from "../session";
 import {
   createAppsClient,
   federatedTransport,
@@ -58,8 +54,8 @@ export function applyApps(
   session: BuilderlabSession,
   /** Whether Settings can sign in; otherwise the app's own browser login is used. */
   loginAvailable: boolean,
-  /** The legacy browser sign-in, which the tools use while it is the one in
-   * use; the NIP-FI session goes through native instead. */
+  /** The legacy browser sign-in of a build without NIP-FI; an FI build's
+   * session goes through native instead. */
   legacy?: OAuthSession,
   dev?: Pick<Host, "request" | "upload">,
 ) {
@@ -105,14 +101,12 @@ export function applyApps(
     component: AppView,
   });
   const base = controlPlane();
-  const identity = nativeBuilderlab() || autoBuilderlab();
-  if (!base || (!legacy && !dev && !identity)) return;
-  // The sign-in in use: never a browser sign-in hidden behind the NIP-FI
-  // session.
+  if (!base || (!legacy && !dev && !nativeBuilderlab())) return;
+  // An FI build's tools call through native, which holds the session.
   const apps = () =>
     dev
       ? createAppsClient(ctx.host, session, base, dev)
-      : legacy && !session.snapshot().federated
+      : legacy
         ? createAppsClient(ctx.host, legacy, base)
         : createAppsClient(
             ctx.host,

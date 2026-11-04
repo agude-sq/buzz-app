@@ -50,10 +50,7 @@ import { SidebarSectionsService } from "../features/channel-navigation/sidebar-s
 import { SidebarScopeService } from "../features/channel-navigation/sidebar-scope-service";
 import { bundledPlugins } from "../bundled";
 import { bundledFederatedIdentity } from "../bundled/builderlab/oauth/first-run";
-import {
-  autoBuilderlab,
-  nativeBuilderlab,
-} from "../bundled/builderlab/session";
+import { nativeBuilderlab } from "../bundled/builderlab/session";
 import { conversationFeatures } from "./conversation-features";
 import { PluginDevelopmentService } from "../features/plugin-development/service";
 import { createPluginManager } from "../plugins/manager";
@@ -76,10 +73,9 @@ export function createServices() {
   const federatedIdentity = new FederatedIdentityService(ctx);
   // An FI build's Welcome calls the session as the Builderlab plugin's
   // bundled installation, which works whether or not the plugin has started.
-  const firstRunFederatedIdentity =
-    nativeBuilderlab() || autoBuilderlab()
-      ? bundledFederatedIdentity(ctx)
-      : undefined;
+  const firstRunFederatedIdentity = nativeBuilderlab()
+    ? bundledFederatedIdentity(ctx)
+    : undefined;
   const plugins = createPluginManager(ctx, {
     bundled: bundledPlugins,
     builtIn: conversationFeatures,

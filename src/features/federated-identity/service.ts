@@ -66,8 +66,6 @@ export interface FederatedIdentity {
   forCommunity?(relay: string): FederatedIdentity;
   /** The session of the sign-in server with this id, for Settings. */
   forServer?(id: string): FederatedIdentity;
-  /** Retries a restore that failed, such as offline at launch. */
-  restore?(): Promise<SessionSnapshot>;
 }
 declare module "@deepseek-ai/cordis" {
   interface Context {
@@ -360,9 +358,6 @@ class CommunitySession implements FederatedIdentity {
   }
   async signOut() {
     await this.operation("federated_identity_sign_out");
-  }
-  restore() {
-    return this.operation("federated_identity_snapshot");
   }
   async cancelSignIn() {
     await invoke("federated_identity_cancel_sign_in", this.target);
