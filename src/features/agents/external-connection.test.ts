@@ -166,6 +166,128 @@ it("closes a failed resume without revoking saved approval", async () => {
   expect(pairing.mock.calls.map((call) => call[0])).not.toContain("revoke");
 });
 
+it("keeps pending owner consent when reconnect proof fails", async () => {
+  const server = transport();
+  const authorizing = deferred<void>();
+  const started = deferred<void>();
+  server.authorize.mockImplementationOnce(async () => {
+    started.resolve();
+    await authorizing.promise;
+  });
+  const connection = createExternalApps();
+  connection.bind({
+    connect: async () => server,
+    deny: async () => {},
+    pairing: async (operation) => {
+      if (operation === "resume") throw new Error("Invalid proof");
+      return null;
+    },
+  });
+  connection.open(request, "viewer");
+  const approving = connection.approve("test-agent");
+  await started.promise;
+  try {
+    connection.open(resumeRequest, "viewer");
+    await vi.waitFor(() =>
+      expect(connection.snapshot().error).toContain("Cannot restore"),
+    );
+  } finally {
+    authorizing.resolve();
+    await approving;
+  }
+  expect(connection.snapshot().grant?.phase).toBe("waiting");
+  await server.close();
+  await vi.waitFor(() =>
+    expect(connection.snapshot().grant?.phase).toBe("ended"),
+  );
+});
+
+it.each(["proof", "connect"])(
+  "loads saved approval after queued reconnect fails at %s",
+  async (failure) => {
+    const loaded = deferred<typeof savedPairing>();
+    const connection = createExternalApps();
+    connection.open(resumeRequest, "viewer");
+    connection.bind({
+      connect: async () => {
+        throw new Error("Agent is unavailable");
+      },
+      deny: async () => {},
+      pairing: async (operation) => {
+        if (operation === "get") return loaded.promise;
+        if (operation === "resume" && failure === "proof")
+          throw new Error("Invalid proof");
+        return savedPairing;
+      },
+    });
+    await vi.waitFor(() =>
+      expect(connection.snapshot().error).toContain("Cannot restore"),
+    );
+    loaded.resolve(savedPairing);
+    await vi.waitFor(() =>
+      expect(connection.snapshot().pairing).toEqual(savedPairing),
+    );
+    expect(connection.snapshot().grant).toMatchObject({
+      agent: "test-agent",
+      phase: "ended",
+    });
+    await connection.revoke();
+    expect(connection.snapshot().pairing).toBeUndefined();
+  },
+);
+
+it("observes the current session close after reconnect fails", async () => {
+  const server = transport();
+  const connection = createExternalApps();
+  const connect = vi
+    .fn<Agents["connectExternal"]>()
+    .mockResolvedValueOnce(server)
+    .mockRejectedValueOnce(new Error("Agent is unavailable"));
+  connection.bind({
+    connect,
+    deny: async () => {},
+    pairing: async () => savedPairing,
+  });
+  connection.open(request, "viewer");
+  await connection.approve("test-agent");
+  connection.open(resumeRequest, "viewer");
+  await vi.waitFor(() =>
+    expect(connection.snapshot().error).toContain("Cannot restore"),
+  );
+  await server.close();
+  await vi.waitFor(() =>
+    expect(connection.snapshot().grant?.phase).toBe("ended"),
+  );
+});
+
+it("keeps saved approval visible when the initial callback fails", async () => {
+  const server = transport();
+  let saved = false;
+  server.authorize.mockImplementationOnce(async () => {
+    saved = true;
+    throw new Error("Callback lost");
+  });
+  const pairing = vi.fn(async (operation: string) => {
+    if (operation === "revoke") {
+      saved = false;
+      return null;
+    }
+    return saved ? savedPairing : null;
+  });
+  const connection = createExternalApps();
+  connection.bind({
+    connect: async () => server,
+    deny: async () => {},
+    pairing,
+  });
+  connection.open({ ...request, version: 2 }, "viewer");
+  await connection.approve("test-agent");
+  expect(connection.snapshot().pairing).toEqual(savedPairing);
+  expect(connection.snapshot().grant?.phase).toBe("ended");
+  await connection.revoke();
+  expect(saved).toBe(false);
+});
+
 it("refuses a late initial approval while native revoke is pending", async () => {
   const server = transport();
   const connecting = deferred<HostMcpServer>();

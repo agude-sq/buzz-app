@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 use std::time::Instant;
 
 const CODE_LIFETIME: Duration = Duration::from_secs(60);
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Authorization {
     pub(super) callback: String,
@@ -72,7 +72,12 @@ pub(crate) async fn plugin_host_mcp_authorize<R: tauri::Runtime>(
         return Err("Only Agents can manage external approval".into());
     }
     let pairing = if shared.is_some() {
-        super::pairing::authorize(&app, &request, expected_revision)?
+        let request = request.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            super::pairing::authorize(&app, &request, expected_revision)
+        })
+        .await
+        .map_err(|_| "Cannot save Buzz approval")??
     } else {
         None
     };
@@ -206,7 +211,10 @@ fn redeem(shared: &Shared, input: Redemption) -> Option<String> {
     Some(descriptor.to_string())
 }
 
-pub(super) async fn exchange(shared: &Shared, request: Request<Incoming>) -> Response<Full<Bytes>> {
+pub(super) async fn exchange(
+    shared: &Arc<Shared>,
+    request: Request<Incoming>,
+) -> Response<Full<Bytes>> {
     let admitted = !shared.stop.is_cancelled()
         && header(&request, header::HOST) == Some(shared.authority.as_str())
         && request.uri().query().is_none()
@@ -221,9 +229,16 @@ pub(super) async fn exchange(shared: &Shared, request: Request<Incoming>) -> Res
         )
         .await
         {
-            Ok(Ok(body)) => serde_json::from_slice::<Redemption>(&body.to_bytes())
-                .ok()
-                .and_then(|input| redeem(shared, input)),
+            Ok(Ok(body)) => match serde_json::from_slice::<Redemption>(&body.to_bytes()) {
+                Ok(input) => {
+                    let shared = shared.clone();
+                    tauri::async_runtime::spawn_blocking(move || redeem(&shared, input))
+                        .await
+                        .ok()
+                        .flatten()
+                }
+                Err(_) => None,
+            },
             _ => None,
         }
     } else {

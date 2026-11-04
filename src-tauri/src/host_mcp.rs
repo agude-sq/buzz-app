@@ -49,7 +49,7 @@ use tokio::sync::{oneshot, Semaphore};
 use tokio_util::sync::CancellationToken;
 mod authorization;
 pub(crate) use authorization::plugin_host_mcp_authorize;
-mod pairing;
+pub(crate) mod pairing;
 pub(crate) use pairing::plugin_host_mcp_pairing;
 
 /// Servers running at once across all plugins.
@@ -264,7 +264,7 @@ async fn accept(listener: std::net::TcpListener, shared: Arc<Shared>) {
         };
         let shared = shared.clone();
         tauri::async_runtime::spawn(async move {
-            let shared = &*shared;
+            let shared = &shared;
             // One request per connection. hyper drops a request whose client
             // closes before its answer, so the page's late reply is refused.
             let connection = http1::Builder::new()
@@ -286,7 +286,7 @@ async fn accept(listener: std::net::TcpListener, shared: Arc<Shared>) {
 }
 
 async fn answer(
-    shared: &Shared,
+    shared: &Arc<Shared>,
     request: Request<Incoming>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     if request.uri().path() == "/authorize/exchange" {
@@ -353,7 +353,10 @@ async fn forward(shared: &Shared, body: String) -> (StatusCode, Option<String>) 
         request
     };
     let _waiting = Waiting(shared, request);
-    if pairing::forward(shared, McpEvent::Message { request, body }).is_err() {
+    if pairing::forward(shared, McpEvent::Message { request, body })
+        .await
+        .is_err()
+    {
         // Nobody is listening: the page that started it is gone.
         shared.stop.cancel();
         return (StatusCode::SERVICE_UNAVAILABLE, None);

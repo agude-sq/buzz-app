@@ -2,6 +2,7 @@ use super::{authorization::Authorization, *};
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::path::{Path, PathBuf};
 use tauri::Manager;
 
 const SERVICE: &str = "xyz.block.buzz.desktop.external-app-pairing.v1";
@@ -26,7 +27,7 @@ pub(crate) struct Approval {
 #[serde(deny_unknown_fields)]
 pub(crate) struct Grant {
     #[serde(skip)]
-    account: String,
+    account: PathBuf,
     pub id: String,
     secret: String,
     pub approval: Approval,
@@ -119,7 +120,7 @@ impl Grant {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Resume {
     pub id: String,
@@ -134,19 +135,37 @@ fn now() -> Result<u64, String> {
         .map_err(|_| "Cannot read the pairing clock".into())
 }
 
-fn account<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<String, String> {
-    let path = app
-        .path()
+fn account<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<PathBuf, String> {
+    app.path()
         .app_data_dir()
-        .map_err(|_| "Cannot resolve pairing storage")?;
-    Ok(format!(
-        "{:x}",
-        Sha256::digest(path.as_os_str().as_encoded_bytes())
-    ))
+        .map_err(|_| "Cannot resolve pairing storage".into())
 }
 
-fn load(account: &str) -> Result<Option<Grant>, String> {
-    match buzz_credential_store::read(SERVICE, account) {
+fn account_id(path: &Path) -> String {
+    format!("{:x}", Sha256::digest(path.as_os_str().as_encoded_bytes()))
+}
+
+fn lock(path: &Path) -> Result<std::fs::File, String> {
+    std::fs::create_dir_all(path).map_err(|_| "Cannot open pairing storage")?;
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(path.join(".external-app-pairing.lock"))
+        .map_err(|_| "Cannot open pairing storage")?;
+    fs2::FileExt::try_lock_exclusive(&file).map_err(|_| "Pairing storage is busy")?;
+    Ok(file)
+}
+
+pub(crate) fn revoke(path: &Path) -> Result<(), String> {
+    let _lock = LOCK.lock().map_err(|_| "Pairing storage is busy")?;
+    let _file = lock(path)?;
+    clear(path)
+}
+
+fn load(account: &Path) -> Result<Option<Grant>, String> {
+    match buzz_credential_store::read(SERVICE, &account_id(account)) {
         Ok(bytes) => {
             let mut grant: Grant =
                 serde_json::from_slice(&bytes).map_err(|_| "Invalid saved pairing")?;
@@ -169,19 +188,19 @@ fn load(account: &str) -> Result<Option<Grant>, String> {
         Err(_) => Err("Cannot read the saved Buzz approval".into()),
     }
 }
-fn save(account: &str, grant: &Grant) -> Result<(), String> {
+fn save(account: &Path, grant: &Grant) -> Result<(), String> {
     let bytes =
         zeroize::Zeroizing::new(serde_json::to_vec(grant).map_err(|_| "Cannot encode pairing")?);
     #[cfg(target_os = "macos")]
     return security_framework::os::macos::keychain::SecKeychain::default()
-        .and_then(|keychain| keychain.set_generic_password(SERVICE, account, &bytes))
+        .and_then(|keychain| keychain.set_generic_password(SERVICE, &account_id(account), &bytes))
         .map_err(|_| "Cannot save the Buzz approval".into());
     #[cfg(not(target_os = "macos"))]
-    buzz_credential_store::replace(SERVICE, account, &bytes)
+    buzz_credential_store::replace(SERVICE, &account_id(account), &bytes)
         .map_err(|_| "Cannot save the Buzz approval".into())
 }
-fn clear(account: &str) -> Result<(), String> {
-    match buzz_credential_store::delete(SERVICE, account) {
+fn clear(account: &Path) -> Result<(), String> {
+    match buzz_credential_store::delete(SERVICE, &account_id(account)) {
         Ok(()) | Err(buzz_credential_store::Error::Absent) => Ok(()),
         Err(_) => Err("Cannot revoke the saved Buzz approval".into()),
     }
@@ -197,6 +216,7 @@ pub(super) fn authorize<R: tauri::Runtime>(
         return Err("Buzz approval is cancelled".into());
     }
     let account = account(app)?;
+    let _file = lock(&account)?;
     match (&request.approval, &request.resume) {
         (None, None) => Ok(None),
         (Some(approval), resume) => {
@@ -256,23 +276,33 @@ pub(super) fn authorize<R: tauri::Runtime>(
     }
 }
 
-pub(super) fn forward(shared: &Shared, event: McpEvent) -> Result<(), String> {
-    let _lock = LOCK.lock().map_err(|_| "Pairing storage is busy")?;
-    if shared.stop.is_cancelled() {
-        return Err("MCP session is closed".into());
-    }
-    if let Some(grant) = shared
+pub(super) async fn forward(shared: &Shared, event: McpEvent) -> Result<(), String> {
+    let grant = shared
         .pairing
         .lock()
         .map_err(|_| "Pairing state unavailable")?
-        .as_ref()
-    {
+        .clone();
+    let Some(grant) = grant else {
+        return shared
+            .events
+            .send(event)
+            .map_err(|_| "The page is unavailable".into());
+    };
+    let stop = shared.stop.clone();
+    let events = shared.events.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _lock = LOCK.lock().map_err(|_| "Pairing storage is busy")?;
+        if stop.is_cancelled() {
+            return Err("MCP session is closed".into());
+        }
+        let _file = lock(&grant.account)?;
         grant.active()?;
-    }
-    shared
-        .events
-        .send(event)
-        .map_err(|_| "The page is unavailable".into())
+        events
+            .send(event)
+            .map_err(|_| "The page is unavailable".into())
+    })
+    .await
+    .map_err(|_| "Cannot check Buzz approval")?
 }
 
 #[tauri::command]
@@ -295,41 +325,47 @@ pub(crate) async fn plugin_host_mcp_pairing<R: tauri::Runtime>(
     if !granted {
         return Err("MCP servers are not declared".into());
     }
-    let _lock = LOCK.lock().map_err(|_| "Pairing storage is busy")?;
-    let account = account(&app)?;
-    if operation == "revoke" {
-        REVISION.fetch_add(1, Ordering::SeqCst);
-        clear(&account)?;
-        for entry in servers.registry().entries.values() {
-            if entry
-                .shared
-                .pairing
-                .lock()
-                .map_or(true, |pairing| pairing.is_some())
-            {
-                entry.shared.stop.cancel();
+    let servers = servers.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _lock = LOCK.lock().map_err(|_| "Pairing storage is busy")?;
+        let account = account(&app)?;
+        let _file = lock(&account)?;
+        if operation == "revoke" {
+            REVISION.fetch_add(1, Ordering::SeqCst);
+            clear(&account)?;
+            for entry in servers.registry().entries.values() {
+                if entry
+                    .shared
+                    .pairing
+                    .lock()
+                    .map_or(true, |pairing| pairing.is_some())
+                {
+                    entry.shared.stop.cancel();
+                }
             }
+            return Ok(None);
         }
-        return Ok(None);
-    }
-    let Some(mut grant) = load(&account)? else {
-        return Ok(None);
-    };
-    if grant.expires_at <= now()? {
-        clear(&account)?;
-        return Ok(None);
-    }
-    match operation.as_str() {
-        "get" => {}
-        "resume" => {
-            let request = request.ok_or("Missing pairing request")?;
-            super::authorization::callback(&request)?;
-            grant.reserve(&request)?;
-            save(&account, &grant)?;
+        let Some(mut grant) = load(&account)? else {
+            return Ok(None);
+        };
+        if grant.expires_at <= now()? {
+            clear(&account)?;
+            return Ok(None);
         }
-        _ => return Err("Unknown pairing operation".into()),
-    }
-    Ok(Some(grant.public()))
+        match operation.as_str() {
+            "get" => {}
+            "resume" => {
+                let request = request.ok_or("Missing pairing request")?;
+                super::authorization::callback(&request)?;
+                grant.reserve(&request)?;
+                save(&account, &grant)?;
+            }
+            _ => return Err("Unknown pairing operation".into()),
+        }
+        Ok(Some(grant.public()))
+    })
+    .await
+    .map_err(|_| "Cannot check Buzz approval")?
 }
 
 #[cfg(test)]
@@ -365,6 +401,15 @@ mod tests {
                 proof: "qH9judhRwAJ50VJGXgDjDqeicXa4Lo7qUERD1PNzOnM".into(),
             }),
         }
+    }
+
+    #[test]
+    fn storage_lock_excludes_other_handles_and_releases_on_close() {
+        let directory = tempfile::tempdir().unwrap();
+        let first = lock(directory.path()).unwrap();
+        assert!(lock(directory.path()).is_err());
+        drop(first);
+        assert!(lock(directory.path()).is_ok());
     }
 
     #[test]

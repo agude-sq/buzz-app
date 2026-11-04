@@ -211,7 +211,7 @@ export function createExternalApps() {
       bound = host;
     if (!incoming || !bound?.pairing) return;
     resuming = undefined;
-    const attemptGeneration = ++generation;
+    let attemptGeneration = generation;
     let candidate: HostMcpServer | undefined;
     let candidateController: AbortController | undefined;
     let connected = false;
@@ -233,6 +233,20 @@ export function createExternalApps() {
           JSON.stringify(incoming.request.scope)
       )
         throw new Error("The saved approval does not match this request.");
+      attemptGeneration = ++generation;
+      update({
+        ...state,
+        pairing,
+        ...(!state.grant
+          ? {
+              grant: {
+                client: pairing.approval.client,
+                agent: pairing.approval.agent,
+                phase: "ended" as const,
+              },
+            }
+          : {}),
+      });
       const attempt = new AbortController();
       candidateController = attempt;
       const result = await bound.connect(
@@ -408,19 +422,21 @@ export function createExternalApps() {
         }
         server = result;
         void result.closed.then(() => {
-          if (controller !== attempt || generation !== attemptGeneration)
-            return;
+          if (server !== result) return;
           attempt.abort();
           server = undefined;
           update({ ...state, grant: { ...grant, phase: "ended" } });
         });
         if (!result.authorize)
           throw new Error("This Buzz host cannot authorize external apps.");
-        await result.authorize(nativeRequest(pending.request));
-        if (pending.request.version === 2 && bound.pairing) {
-          const pairing = await bound.pairing("get");
-          if (controller === attempt && generation === attemptGeneration)
-            update({ ...state, pairing: pairing ?? undefined });
+        try {
+          await result.authorize(nativeRequest(pending.request));
+        } finally {
+          if (pending.request.version === 2 && bound.pairing) {
+            const pairing = await bound.pairing("get");
+            if (controller === attempt && generation === attemptGeneration)
+              update({ ...state, pairing: pairing ?? undefined });
+          }
         }
         if (
           controller === attempt &&
