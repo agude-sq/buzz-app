@@ -135,12 +135,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
         .snapshot()
         .map((card) => card.pluginId)
         .sort(),
-      [
-        "block.builderlab",
-        "buzz.channels",
-        "buzz.emoji",
-        "buzz.pairing",
-      ],
+      ["block.builderlab", "buzz.channels", "buzz.emoji", "buzz.pairing"],
     );
     // The device-local template library remains reachable without a selected community.
     assert.equal(
@@ -206,12 +201,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
         .snapshot()
         .map((card) => card.pluginId)
         .sort(),
-      [
-        "block.builderlab",
-        "buzz.channels",
-        "buzz.emoji",
-        "buzz.pairing",
-      ],
+      ["block.builderlab", "buzz.channels", "buzz.emoji", "buzz.pairing"],
     );
 
     await vi.waitFor(() =>
