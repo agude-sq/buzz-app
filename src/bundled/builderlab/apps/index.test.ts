@@ -125,24 +125,72 @@ it("adds the app tools only for a tenant with an Apps control plane", async () =
   );
 });
 
-it("turns the tools off while the NIP-FI session is in use, never calling as the browser sign-in", async () => {
+it("calls through the NIP-FI session while it is in use, never as the browser sign-in", async () => {
   const { ctx, respond, session: browser } = await setup();
   const tools = new Map<string, AddedTool>();
   ctx.agents.addTool = (tool: AddedTool) => tools.set(tool.name, tool);
+  const request = vi.fn(async ({ path }: { path: string }) =>
+    json(
+      path.endsWith("/contract")
+        ? { minimum_client_version: "0.2.0" }
+        : { apps: [] },
+    ),
+  );
   const federated = {
     ...browser,
     snapshot: () => ({ ...browser.snapshot(), federated: true }),
   };
-  applyApps(ctx as never, federated, true, browser);
-  for (const name of ["apps_list", "apps_create"])
-    await expect(
-      (tools.get(name) as AddedTool).call(
-        {} as BuzzClient,
-        {},
-        { name: "demo" },
-      ),
-    ).rejects.toThrow("not available with your organization sign-in");
+  applyApps(
+    { ...ctx, federatedIdentity: { request } } as never,
+    federated,
+    true,
+    browser,
+  );
+  await (tools.get("apps_list") as AddedTool).call({} as BuzzClient, {}, {});
+  await (tools.get("apps_deploy") as AddedTool).call(
+    {} as BuzzClient,
+    {},
+    { app_id: "demo", artifact: "/Users/me/a.tar.gz" },
+  );
   expect(respond).not.toHaveBeenCalled();
+  // Native adds the session; the renderer sends none of its own.
+  expect(request).toHaveBeenCalledWith({
+    apps: true,
+    path: "/v1/agent/apps?scope=owned",
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+      "X-Hotpod-Agent-Client-Version": "0.2.0",
+    },
+  });
+  expect(request).toHaveBeenCalledWith({
+    apps: true,
+    path: "/v1/agent/apps/demo/deploy",
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "X-Hotpod-Agent-Client-Version": "0.2.0",
+    },
+    upload: {
+      field: "artifact",
+      path: "/Users/me/a.tar.gz",
+      name: "artifact.tar.gz",
+      contentType: "application/gzip",
+    },
+  });
+});
+
+it("offers the tools in an FI build, which has no browser sign-in", async () => {
+  const { ctx, session } = await setup();
+  vi.stubEnv("VITE_BUZZ_FEDERATED_IDENTITY", "1");
+  const tools = new Map<string, AddedTool>();
+  ctx.agents.addTool = (tool: AddedTool) => tools.set(tool.name, tool);
+  const request = vi.fn(async () => json({ apps: [] }));
+  applyApps({ ...ctx, federatedIdentity: { request } } as never, session, true);
+  await expect(
+    (tools.get("apps_list") as AddedTool).call({} as BuzzClient, {}, {}),
+  ).resolves.toBe(JSON.stringify({ apps: [] }, null, 2));
+  expect(request).toHaveBeenCalledOnce();
 });
 
 it("returns once the deployed version serves", async () => {

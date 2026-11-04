@@ -37,6 +37,19 @@ export type AuthenticatedRequest = Readonly<{
   method?: "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE";
   headers?: Readonly<Record<string, string>>;
   body?: string;
+  /** Native deadline in milliseconds, 1–180000. Defaults to 30000. */
+  timeoutMs?: number;
+  /** To the server's Apps Platform control plane, as `bl apps` calls it;
+   * native allows only the bundled Builderlab plugin. */
+  apps?: boolean;
+  /** An Apps deploy: a `.tar.gz` file in the home directory, POSTed as a
+   * multipart form. */
+  upload?: Readonly<{
+    field: string;
+    path: string;
+    name: string;
+    contentType: string;
+  }>;
 }>;
 export interface FederatedIdentity {
   /** Granted routes are forwarded natively with the session as a Bearer token. */

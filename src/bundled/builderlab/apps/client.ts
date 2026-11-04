@@ -2,6 +2,7 @@
 // sign-in as `bl apps` calls it (block/builderlab-cli `src/bl/apps.rs`): the
 // session goes as `Authorization: BBIdentity <session>`, and the gateway
 // exchanges it for the control plane's own token.
+import type { FederatedIdentity } from "../../../features/federated-identity/service";
 import type { Host, HostResponse } from "../../../features/host/service";
 import type { BuilderlabSession } from "../session";
 
@@ -26,12 +27,59 @@ const text = (value: unknown) =>
   typeof value === "string" && value ? value : undefined;
 
 export type AppsClient = ReturnType<typeof createAppsClient>;
+type Transport = Pick<Host, "request" | "upload">;
+
+/**
+ * Apps calls over the native NIP-FI session: native sends its token to the
+ * server's control plane as `BBIdentity`, so the renderer never holds it, and
+ * refuses a call started under another account.
+ */
+export function federatedTransport(
+  identity: Pick<FederatedIdentity, "request">,
+  base: string,
+): Transport {
+  const path = (url: string) => {
+    if (!url.startsWith(`${base}/`))
+      throw new Error("Apps calls go to this server's control plane");
+    return url.slice(base.length);
+  };
+  // Native sets the session itself; the client's empty one never goes.
+  const headers = (all: Readonly<Record<string, string>> = {}) =>
+    Object.fromEntries(
+      Object.entries(all).filter(
+        ([name]) => name.toLowerCase() !== "authorization",
+      ),
+    );
+  return {
+    request: ({ url, method, headers: all, body, timeoutMs }) =>
+      identity.request({
+        apps: true,
+        path: path(url),
+        ...(method ? { method } : {}),
+        headers: headers(all),
+        ...(body === undefined ? {} : { body }),
+        ...(timeoutMs === undefined ? {} : { timeoutMs }),
+      }),
+    upload: ({ url, headers: all, fields, file }) => {
+      if (fields && Object.keys(fields).length)
+        throw new Error("Apps deploys send only the archive");
+      return identity.request({
+        apps: true,
+        path: path(url),
+        method: "POST",
+        headers: headers(all),
+        upload: file,
+      });
+    },
+  };
+}
 
 export function createAppsClient(
   host: Host,
   session: BuilderlabSession,
   base: string,
-  transport?: Pick<Host, "request" | "upload">,
+  /** Sends each call authenticated itself, such as over the NIP-FI session. */
+  transport?: Transport,
 ) {
   const http = transport ?? host;
   // One client belongs to one tool operation, including all its HTTP steps.

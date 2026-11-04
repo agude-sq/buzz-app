@@ -1646,8 +1646,14 @@ fn only_the_current_identifier_takes_every_folder_the_legacy_one_used() {
     let config: serde_json::Value =
         serde_json::from_str(include_str!("../../tauri.conf.json")).unwrap();
     // The onboarding-test branch builds as its own identifier, which moves nothing.
-    assert_eq!(config["identifier"], "xyz.block.buzz.desktop.onboarding-test");
-    assert_eq!(moves("xyz.block.buzz.desktop.onboarding-test"), Some(Vec::new()));
+    assert_eq!(
+        config["identifier"],
+        "xyz.block.buzz.desktop.onboarding-test"
+    );
+    assert_eq!(
+        moves("xyz.block.buzz.desktop.onboarding-test"),
+        Some(Vec::new())
+    );
     assert_eq!(
         moves("dev.local.buzz.foundation.nexus-test-012345abcdef"),
         Some(Vec::new())

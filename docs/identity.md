@@ -28,10 +28,8 @@ API base, so a build for another Builderlab never reads, sends or deletes it.
 A save that fails is a retryable sign-in error, and a sign-out stays unfinished
 until the item is deleted. Once a NIP-FI session exists it is the sign-in in
 use, even while its account is loading or failing, and the browser sign-in is
-signed out, revoked and deleted. The Apps agent tools are offered only while
-that browser sign-in is in use; native sends no NIP-FI session to the Apps
-control plane, as in builds that add a server. Builderlab Decisions follows
-whichever sign-in is in use. Any other answer means NIP-FI sign-in, as below; a network error or
+signed out, revoked and deleted. Builderlab Decisions and the Apps agent tools
+follow whichever sign-in is in use. Any other answer means NIP-FI sign-in, as below; a network error or
 5xx shows the retryable sign-in error and never falls back to the browser. The
 plugin uses the server's native session whenever one exists, such as after a
 community that requires NIP-FI asked for sign-in, and the browser credential
@@ -951,8 +949,15 @@ that the revision is current. Each sends the adapter session as
 without ending the session; native then checks the adapter's `GET /v1/session`
 once and ends the session only if the adapter refuses it there. Builderlab's
 Settings card has no sign-out of its own in an FI build: it links to Identity →
-Organization sign-in, which ends the shared session. Builderlab
-Apps' agent tools still need the legacy login and are absent in FI builds.
+Organization sign-in, which ends the shared session.
+
+Builderlab Apps' agent tools use the same session, as `bl apps` does. Only the
+bundled Builderlab plugin may ask, and only for `/v1/agent/` paths: native
+sends them to the Apps control plane paired with the server's identity origin
+(`apps_control_plane` in the plugin manager) with the session as
+`Authorization: BBIdentity`. A deploy names a `.tar.gz` file in the home
+directory, which native reads and uploads itself, with the same checks as a
+plugin upload. A 401 is handled as for API calls.
 
 Settings → Identity → Organization sign-in is the same whichever community is
 open. It lists each server you are signed in to, with its name and origin, the

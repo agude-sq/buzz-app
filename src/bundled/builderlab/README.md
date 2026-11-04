@@ -17,7 +17,8 @@ One Builderlab account for communities and agents that Builderlab hosts for you,
 ## Apps pilot
 
 Local agents can create, deploy, inspect readiness, share and open Apps Platform
-apps using the Settings Builderlab sign-in. `apps_contract` reports the selected
+apps using the Settings Builderlab sign-in; over a NIP-FI session native sends
+it to the control plane, so the renderer never holds it. `apps_contract` reports the selected
 tenant's runtimes and schema location. Creation checks that contract and supports
 `static` and `fetch-js`; it repeats the selected runtime through reservation and
 initialization. The executable profile returns the required asset manifest and

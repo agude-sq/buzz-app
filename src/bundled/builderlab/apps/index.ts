@@ -6,8 +6,17 @@ import type { PluginModule } from "../../../plugins/api";
 import type { PanelProps } from "../../../features/panels/service";
 import type { Host } from "../../../features/host/service";
 import type { OAuthSession } from "../oauth/session";
-import type { BuilderlabSession } from "../session";
-import { createAppsClient, type Audience, type RuntimeProfile } from "./client";
+import {
+  autoBuilderlab,
+  nativeBuilderlab,
+  type BuilderlabSession,
+} from "../session";
+import {
+  createAppsClient,
+  federatedTransport,
+  type Audience,
+  type RuntimeProfile,
+} from "./client";
 import {
   appName,
   controlPlane,
@@ -49,8 +58,8 @@ export function applyApps(
   session: BuilderlabSession,
   /** Whether Settings can sign in; otherwise the app's own browser login is used. */
   loginAvailable: boolean,
-  /** The legacy sign-in the control-plane tools authenticate with; an FI
-   * build has none yet, so it offers no tools. */
+  /** The legacy browser sign-in, which the tools use while it is the one in
+   * use; the NIP-FI session goes through native instead. */
   legacy?: OAuthSession,
   dev?: Pick<Host, "request" | "upload">,
 ) {
@@ -96,16 +105,21 @@ export function applyApps(
     component: AppView,
   });
   const base = controlPlane();
-  if (!base || (!legacy && !dev)) return;
-  // Off while the NIP-FI session is in use, as in an FI build: the tools
-  // never call as a browser sign-in hidden behind it.
-  const apps = () => {
-    if (session.snapshot().federated)
-      throw new Error(
-        "Builderlab Apps tools are not available with your organization sign-in.",
-      );
-    return createAppsClient(ctx.host, legacy ?? session, base, dev);
-  };
+  const identity = nativeBuilderlab() || autoBuilderlab();
+  if (!base || (!legacy && !dev && !identity)) return;
+  // The sign-in in use: never a browser sign-in hidden behind the NIP-FI
+  // session.
+  const apps = () =>
+    dev
+      ? createAppsClient(ctx.host, session, base, dev)
+      : legacy && !session.snapshot().federated
+        ? createAppsClient(ctx.host, legacy, base)
+        : createAppsClient(
+            ctx.host,
+            session,
+            base,
+            federatedTransport(ctx.federatedIdentity, base),
+          );
   const reply = (value: unknown) => JSON.stringify(value, null, 2);
   ctx.agents.addTool({
     name: "apps_contract",
