@@ -1,4 +1,5 @@
 import { SEARCH_DEBOUNCE_MS } from "../../shared/search-debounce";
+import { setNamePreference } from "../../features/identity-names/name-preference";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { createRef, useState } from "react";
@@ -6520,6 +6521,7 @@ it("labels a row by its verified name over a cached profile name without a namin
               ["p", fake.pubkey],
               ["active", "true"],
               ["display_name", "fname"],
+              ["full_name", "Other Person"],
               ["username", "fname"],
               ["issuer_label", "Block"],
               ["verified_at", "1000000"],
@@ -6561,15 +6563,29 @@ it("labels a row by its verified name over a cached profile name without a namin
     );
     const people = await screen.findByRole("group", { name: "People" });
     await waitFor(() =>
-      expect(within(people).getByRole("option")).toHaveTextContent(
-        /fnameStart a direct message$/,
-      ),
+      expect(
+        within(people).getByText("fname", { exact: true }),
+      ).toBeInTheDocument(),
     );
+    act(() => setNamePreference("full"));
+    expect(
+      within(people).getByText("Other Person", { exact: true }),
+    ).toBeInTheDocument();
+    expect(
+      within(people)
+        .getByRole("option")
+        .textContent?.match(/Other Person/g),
+    ).toHaveLength(1);
+    act(() => setNamePreference("display"));
+    expect(
+      within(people).getByText("fname", { exact: true }),
+    ).toBeInTheDocument();
     expect(owner.session.profiles.snapshot().get(fake.pubkey)?.verified).toBe(
       undefined,
     );
   } finally {
     cleanup();
+    setNamePreference("display");
     owner.dispose();
   }
 });

@@ -1,3 +1,7 @@
+import {
+  preferredVerifiedName,
+  useNamePreference,
+} from "../../features/identity-names/name-preference";
 import { workflowLabel } from "../../features/relay/workflow-attribution";
 import {
   useIdentityNames,
@@ -393,6 +397,7 @@ export function SearchResults({
     key: peopleNeedle,
     settled: !personDirectory.loading,
   });
+  const { preference: namePreference } = useNamePreference();
   useMentionArchives(session, showAuthorPicker || peopleActive);
   // People labels come from one names scope built each render.
   useNamesRevision(session.names, peopleActive);
@@ -648,12 +653,20 @@ export function SearchResults({
       // The relay matched these names; a verified name must not lose the row.
       searched.set(
         person.pubkey,
-        [person.name, person.username].filter((name) => name !== undefined),
+        [
+          person.name,
+          person.username,
+          verifiedOf(person.pubkey)?.displayName,
+        ].filter((name) => name !== undefined),
       );
       sources.set(
         person.pubkey,
         found
-          ? { ...source, name: found.displayName, username: found.username }
+          ? {
+              ...source,
+              name: preferredVerifiedName(found, namePreference),
+              username: found.username,
+            }
           : source,
       );
     }
