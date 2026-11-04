@@ -13,6 +13,42 @@ pub(super) fn revision() -> u64 {
     REVISION.load(Ordering::SeqCst)
 }
 
+pub(super) fn begin(shared: &Shared, expected_revision: u64) -> Result<(), String> {
+    let _lock = LOCK.lock().map_err(|_| "Pairing storage is busy")?;
+    if revision() != expected_revision || shared.stop.is_cancelled() {
+        return Err("Buzz approval is cancelled".into());
+    }
+    shared.pairing_pending.store(true, Ordering::SeqCst);
+    Ok(())
+}
+
+fn publish(shared: &Shared, grant: Grant, expected_revision: u64) -> Result<(), String> {
+    // The caller holds LOCK so revoke cannot split the save from publication.
+    if revision() != expected_revision || shared.stop.is_cancelled() {
+        return Err("Buzz approval is cancelled".into());
+    }
+    *shared
+        .pairing
+        .lock()
+        .map_err(|_| "Pairing state unavailable")? = Some(grant);
+    shared.pairing_pending.store(false, Ordering::SeqCst);
+    Ok(())
+}
+
+fn cancel_servers(servers: &HostMcpServers) {
+    for entry in servers.registry().entries.values() {
+        if entry.shared.pairing_pending.load(Ordering::SeqCst)
+            || entry
+                .shared
+                .pairing
+                .lock()
+                .map_or(true, |pairing| pairing.is_some())
+        {
+            entry.shared.stop.cancel();
+        }
+    }
+}
+
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Approval {
@@ -229,6 +265,7 @@ pub(super) fn authorize<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     request: &Authorization,
     expected_revision: u64,
+    shared: &Shared,
 ) -> Result<Option<Grant>, String> {
     let _lock = LOCK.lock().map_err(|_| "Pairing storage is busy")?;
     if revision() != expected_revision {
@@ -243,6 +280,7 @@ pub(super) fn authorize<R: tauri::Runtime>(
                 let mut grant = load(&account)?.ok_or("Buzz approval is revoked")?;
                 grant.renew(request, now()?)?;
                 save(&account, &grant)?;
+                publish(shared, grant.clone(), expected_revision)?;
                 return Ok(Some(grant));
             }
             let pubkey = |value: &str| {
@@ -284,6 +322,7 @@ pub(super) fn authorize<R: tauri::Runtime>(
                 state: String::new(),
             };
             save(&account, &grant)?;
+            publish(shared, grant.clone(), expected_revision)?;
             Ok(Some(grant))
         }
         _ => Err("Missing Buzz approval".into()),
@@ -347,16 +386,7 @@ pub(crate) async fn plugin_host_mcp_pairing<R: tauri::Runtime>(
         if operation == "revoke" {
             REVISION.fetch_add(1, Ordering::SeqCst);
             clear(&account)?;
-            for entry in servers.registry().entries.values() {
-                if entry
-                    .shared
-                    .pairing
-                    .lock()
-                    .map_or(true, |pairing| pairing.is_some())
-                {
-                    entry.shared.stop.cancel();
-                }
-            }
+            cancel_servers(&servers);
             return Ok(None);
         }
         let Some(mut grant) = load(&account)? else {
@@ -435,6 +465,63 @@ mod tests {
         request.resume.as_mut().unwrap().counter = counter;
         request.resume.as_mut().unwrap().proof = URL_SAFE_NO_PAD.encode(proof);
         request
+    }
+
+    #[tokio::test]
+    async fn revoke_cancels_pending_and_published_approval_without_closing_other_servers() {
+        let servers = HostMcpServers::default();
+        let serve = |plugin: &str| {
+            let info = servers
+                .serve(
+                    servers.page(),
+                    plugin.into(),
+                    Channel::new(|_| Ok(())),
+                    false,
+                )
+                .unwrap();
+            servers.owned(plugin, info.handle).unwrap()
+        };
+        let pending = serve("buzz.agents");
+        let published = serve("buzz.agents");
+        let legacy = serve("buzz.agents");
+        let generic = serve("other-plugin");
+        let expected_revision = revision();
+        begin(&pending, expected_revision).unwrap();
+        begin(&published, expected_revision).unwrap();
+        {
+            let _lock = LOCK.lock().unwrap();
+            publish(&published, grant(), expected_revision).unwrap();
+            assert!(pending.pairing.lock().unwrap().is_none());
+            REVISION.fetch_add(1, Ordering::SeqCst);
+            cancel_servers(&servers);
+            assert!(pending.stop.is_cancelled());
+            assert!(published.stop.is_cancelled());
+            assert!(!legacy.stop.is_cancelled());
+            assert!(!generic.stop.is_cancelled());
+            assert!(publish(&pending, grant(), expected_revision).is_err());
+            assert!(pending.pairing.lock().unwrap().is_none());
+        }
+        servers.stop_all();
+    }
+
+    #[tokio::test]
+    async fn cancelled_server_cannot_publish_approval_at_the_current_revision() {
+        let servers = HostMcpServers::default();
+        let info = servers
+            .serve(
+                servers.page(),
+                "buzz.agents".into(),
+                Channel::new(|_| Ok(())),
+                false,
+            )
+            .unwrap();
+        let shared = servers.owned("buzz.agents", info.handle).unwrap();
+        let _lock = LOCK.lock().unwrap();
+        let expected_revision = revision();
+        shared.stop.cancel();
+        assert!(publish(&shared, grant(), expected_revision).is_err());
+        assert!(shared.pairing.lock().unwrap().is_none());
+        servers.stop_all();
     }
 
     #[test]

@@ -71,10 +71,13 @@ pub(crate) async fn plugin_host_mcp_authorize<R: tauri::Runtime>(
     if (request.approval.is_some() || request.resume.is_some()) && plugin != "buzz.agents" {
         return Err("Only Agents can manage external approval".into());
     }
-    let pairing = if shared.is_some() {
+    let pairing = if let Some(shared) = shared.clone() {
         let request = request.clone();
         tauri::async_runtime::spawn_blocking(move || {
-            super::pairing::authorize(&app, &request, expected_revision)
+            if request.approval.is_some() || request.resume.is_some() {
+                super::pairing::begin(&shared, expected_revision)?;
+            }
+            super::pairing::authorize(&app, &request, expected_revision, &shared)
         })
         .await
         .map_err(|_| "Cannot save Buzz approval")??
@@ -96,6 +99,7 @@ async fn authorize_with_pairing(
 ) -> Result<(), String> {
     let url = callback(&request)?;
     let deadline = tokio::time::Instant::now() + CODE_LIFETIME;
+    let durable = pairing.is_some();
     let body = if let Some(shared) = &shared {
         if shared.shared_session
             || shared.claim.load(Ordering::SeqCst) != UNCLAIMED
@@ -118,10 +122,6 @@ async fn authorize_with_pairing(
             .as_ref()
             .map(|grant| grant.response_proof(&request, &code, &endpoint))
             .transpose()?;
-        *shared
-            .pairing
-            .lock()
-            .map_err(|_| "Pairing state unavailable")? = pairing;
         *exchange = Some(Exchange {
             code: code.clone(),
             state: request.state.clone(),
@@ -144,7 +144,16 @@ async fn authorize_with_pairing(
         .timeout(Duration::from_secs(5))
         .build()
         .map_err(|_| "Could not send authorization result")?;
-    let sent = client.post(url).json(&body).send().await;
+    let sending = client.post(url).json(&body).send();
+    let sent = if let Some(shared) = shared.as_ref().filter(|_| durable) {
+        tokio::select! {
+            biased;
+            () = shared.stop.cancelled() => return Err("Buzz approval is cancelled".into()),
+            result = sending => result,
+        }
+    } else {
+        sending.await
+    };
     if !sent.is_ok_and(|response| response.status().is_success()) {
         if let Some(shared) = shared {
             shared.stop.cancel();

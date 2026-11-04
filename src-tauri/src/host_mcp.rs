@@ -40,7 +40,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::Ipv4Addr;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 use tauri::ipc::Channel;
@@ -100,6 +100,7 @@ struct Shared {
     shared_session: bool,
     authorization: Mutex<Option<authorization::Exchange>>,
     pairing: Mutex<Option<pairing::Grant>>,
+    pairing_pending: AtomicBool,
     events: Channel<McpEvent>,
     stop: CancellationToken,
     pending: Mutex<Pending>,
@@ -181,6 +182,7 @@ impl HostMcpServers {
             shared_session,
             authorization: Mutex::new(None),
             pairing: Mutex::new(None),
+            pairing_pending: AtomicBool::new(false),
             events,
             stop: CancellationToken::new(),
             pending: Mutex::default(),
