@@ -57,12 +57,19 @@ async function fixture(signedIn = true, disabled = false) {
   });
   const client = createAgentClient(session, null);
   const { Create, CreateConfiguration } = createCreationFields(client, session);
+  const submit = vi.fn();
   let draft = { ...EMPTY_CREATION };
   function Form() {
     const [config, setConfig] = useState(draft);
     draft = config;
     return (
-      <form onSubmit={(event) => event.preventDefault()}>
+      <form
+        aria-label="New Builderlab agent"
+        onSubmit={(event) => {
+          event.preventDefault();
+          submit();
+        }}
+      >
         <CreateConfiguration
           config={config}
           onChange={setConfig}
@@ -70,6 +77,7 @@ async function fixture(signedIn = true, disabled = false) {
           harnessControl={null}
         />
         <Create config={config} onChange={setConfig} disabled={disabled} />
+        <button type="submit">Create agent</button>
       </form>
     );
   }
@@ -79,6 +87,7 @@ async function fixture(signedIn = true, disabled = false) {
     acquire,
     request,
     pending,
+    submit,
     draft: () => draft,
     fail: (value: boolean) => {
       fail = value;
@@ -101,6 +110,31 @@ async function choose(label: string, value: string) {
   await user.click(await screen.findByRole("combobox", { name: label }));
   await user.click(await screen.findByRole("option", { name: value }));
 }
+
+it("blocks an empty model submit and focuses Model before accepting a supported pair", async () => {
+  const h = await fixture();
+  await act(async () => h.pending.resolve());
+  const model = await screen.findByRole("button", {
+    name: "Model: Choose a model",
+  });
+  const form = screen.getByRole("form", {
+    name: "New Builderlab agent",
+  }) as HTMLFormElement;
+  expect(form.checkValidity()).toBe(false);
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Create agent" }));
+  expect(h.submit).not.toHaveBeenCalled();
+  expect(model).toHaveFocus();
+  await choose("Model", "Sol 6.1");
+  expect(form.checkValidity()).toBe(false);
+  await choose("Thinking", "High");
+  expect(form.checkValidity()).toBe(true);
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Create agent" }));
+  expect(h.submit).toHaveBeenCalledOnce();
+});
 
 it("loads the catalog and keeps instructions alongside explicit model and effort choices", async () => {
   const h = await fixture();

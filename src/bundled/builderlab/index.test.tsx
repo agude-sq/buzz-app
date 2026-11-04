@@ -1017,6 +1017,12 @@ it.each([
       const model = await within(createDialog).findByRole("button", {
         name: "Model: Choose a model",
       });
+      const createAgent = vi.spyOn(agents, "create");
+      await user.click(create);
+      expect(createAgent).not.toHaveBeenCalled();
+      expect(model).toHaveFocus();
+      expect(create).toBeEnabled();
+      createAgent.mockRestore();
       const group = model.closest(".buzz-settings-group");
       expect(group).toContainElement(
         within(createDialog).getByRole("combobox", { name: "Harness" }),

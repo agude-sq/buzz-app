@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
@@ -62,6 +63,7 @@ export function createCreationFields(
     const [models, setModels] = useState<readonly RemoteAgentModel[]>();
     const [error, setError] = useState("");
     const [revision, setRevision] = useState(0);
+    const controls = useRef<HTMLDivElement>(null);
     // biome-ignore lint/correctness/useExhaustiveDependencies: revision retries catalog loading without changing the draft.
     useEffect(() => {
       if (login.status !== "signed-in") return;
@@ -90,7 +92,27 @@ export function createCreationFields(
     const wrongAccount =
       draft.subject && draft.subject !== login.account?.subject;
     return (
-      <div className="grid gap-4">
+      <div ref={controls} className="grid gap-4">
+        {login.status === "signed-in" && !!models?.length && (
+          <input
+            className="sr-only"
+            name="builderlab-model"
+            value={model ? draft.modelId : ""}
+            required
+            disabled={disabled}
+            tabIndex={-1}
+            aria-hidden="true"
+            onChange={() => {}}
+            onInvalid={(event) => {
+              event.preventDefault();
+              controls.current
+                ?.querySelector<HTMLButtonElement>(
+                  'button[aria-haspopup="menu"]',
+                )
+                ?.focus();
+            }}
+          />
+        )}
         <SettingsGroup>
           {harnessControl}
           {login.status === "signed-in" && !!models?.length && (
