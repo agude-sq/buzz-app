@@ -2636,10 +2636,12 @@ it("shows a team's refusals with different reasons as separate alerts", async ()
       .map((item) => item.textContent ?? "")
       .filter((content) => /^(Ada|Cy): /.test(content));
   await vi.waitFor(() => expect(refusals()).toHaveLength(2));
-  expect(refusals()).toEqual([
-    expect.stringMatching(/^(Ada|Cy): Agent is archived/),
-    expect.stringMatching(/^(Ada|Cy): Invitation denied/),
-  ]);
+  expect(refusals()).toEqual(
+    expect.arrayContaining([
+      expect.stringMatching(/^Ada: Agent is archived/),
+      expect.stringMatching(/^Cy: Invitation denied/),
+    ]),
+  );
   expect(
     screen.getAllByRole("button", { name: /^Retry adding (Ada|Cy)$/ }),
   ).toHaveLength(2);
