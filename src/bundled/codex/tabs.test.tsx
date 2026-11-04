@@ -1889,6 +1889,33 @@ it("refreshes a mounted card after its agent receives an execution binding", asy
   expect(f.spawn).not.toHaveBeenCalled();
 });
 
+it("keeps a bound card focused through unrelated agent updates", async () => {
+  const f = fixture();
+  const binding = { provider: "test/guest" };
+  const inspect = vi.fn(async () => binding);
+  const tabs = createTabs(f.provider, f.runtime, f.spawn, f.setup, inspect);
+  const agent = { ...f.props().agent, executionBinding: binding };
+  const props = {
+    config: defaults,
+    disabled: false,
+    onChange: vi.fn(),
+    openSettings: vi.fn(),
+  };
+  const view = render(<tabs.CreateModel {...props} agent={agent} />);
+  const control = await screen.findByRole("button", { name: "Model settings" });
+  await userEvent.setup().tab();
+  expect(control).toHaveFocus();
+  view.rerender(
+    <tabs.CreateModel
+      {...props}
+      agent={{ ...agent, name: "Renamed", executionBinding: { ...binding } }}
+    />,
+  );
+  expect(screen.getByRole("button", { name: "Model settings" })).toBe(control);
+  expect(control).toHaveFocus();
+  expect(inspect).toHaveBeenCalledOnce();
+});
+
 it("keeps remote settings read-only without opening a model catalog", async () => {
   const f = fixture({ binding: { provider: "test/guest" } });
   render(<f.tabs.SettingsTab {...f.props()} />);

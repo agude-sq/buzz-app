@@ -430,11 +430,11 @@ export function createTabs(
 
   function useBinding(member?: AgentViewProps<Config>["agent"]) {
     const agent = member?.key;
-    const executionBinding = member?.executionBinding;
+    const executionBinding = JSON.stringify(member?.executionBinding);
     const [attempt, setAttempt] = useState(0);
     const [read, setRead] = useState<{
       agent?: AgentKey;
-      observed?: AgentExecutionBinding;
+      observed?: string;
       binding?: AgentExecutionBinding;
       error?: string;
     }>();
