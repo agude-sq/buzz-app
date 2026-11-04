@@ -9,6 +9,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useMemo, useState, type ComponentProps } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { RelayEvent } from "../relay/events";
 import {
@@ -17,9 +18,12 @@ import {
   type SnapshotRead,
 } from "./agent-config-artifacts";
 import {
-  AgentConfigHistory,
+  type AgentConfigHistory,
   AgentConfigVersionRow,
 } from "./AgentConfigHistory";
+import { AgentConfigHistoryRow } from "./AgentConfigHistoryRow";
+import type { Agents, ConfigHistory } from "./service";
+import type { HistorySelection } from "./history-presentation";
 import { HISTORY_PAGE } from "./agent-config-history";
 
 afterEach(cleanup);
@@ -49,6 +53,42 @@ const rev = (
       ...(prev ? [["prev", prev]] : []),
     ],
   }) as RelayEvent;
+
+/** Mount the production feed and its controlled version dialog together. */
+function History(
+  props: Pick<
+    ComponentProps<typeof AgentConfigHistory>,
+    "expected" | "head" | "read" | "onRevert" | "selected"
+  >,
+) {
+  const [selected, select] = useState<HistorySelection | undefined>(
+    props.selected ? { side: "instructions", id: props.selected } : undefined,
+  );
+  const snapshot = useMemo(() => ({}) as ReturnType<Agents["snapshot"]>, []);
+  const history: ConfigHistory = {
+    read: props.read,
+    sides: [
+      {
+        side: "instructions",
+        expected: props.expected,
+        head: props.head,
+        version: 0,
+      },
+    ],
+    revise: (_side, template) => props.onRevert(template),
+  };
+  return (
+    <AgentConfigHistoryRow
+      agents={{
+        configHistory: () => history,
+        snapshot: () => snapshot,
+        subscribe: () => () => {},
+      }}
+      pubkey="a"
+      presentation={{ active: true, selected, select }}
+    />
+  );
+}
 
 it("shows recent versions relatively and older dates with an exact timestamp", () => {
   const now = Date.UTC(2026, 10, 3, 20);
@@ -94,9 +134,10 @@ it("shows recent versions relatively and older dates with an exact timestamp", (
 
 it("pages older history, labels the gap, shows a diff and reverts on the head", async () => {
   // Newest first: r(n-1) … r0; one revision beyond the first page.
-  const revisions = Array.from({ length: HISTORY_PAGE + 1 }, (_, i) =>
-    rev(`r${i}`, i ? `r${i - 1}` : undefined, `line ${i}`),
-  ).reverse();
+  const revisions = Array.from({ length: HISTORY_PAGE + 1 }, (_, i) => ({
+    ...rev(`r${i}`, i ? `r${i - 1}` : undefined, `line ${i}`),
+    created_at: 1_700_000_000 + i,
+  })).reverse();
   let fail = false;
   const read: SnapshotRead = async ([filter]) => {
     if (fail) throw new Error("offline");
@@ -109,32 +150,29 @@ it("pages older history, labels the gap, shows a diff and reverts on the head", 
     async (): Promise<Delivery> => ({ status: "accepted", event: head }),
   );
   render(
-    <AgentConfigHistory
-      expected={expected}
-      head={head}
-      read={read}
-      onRevert={onRevert}
-    />,
+    <History expected={expected} head={head} read={read} onRevert={onRevert} />,
   );
 
   expect(
-    await screen.findByText("Older revisions aren't loaded yet."),
+    await screen.findByText("Instructions: Older revisions aren't loaded yet."),
   ).toBeInTheDocument();
   fail = true;
   fireEvent.click(screen.getByText("Load older"));
   expect(
-    await screen.findByText("Couldn't load older revisions."),
+    await screen.findByText("Instructions: Couldn't load older revisions."),
   ).toBeInTheDocument();
   fail = false;
   fireEvent.click(screen.getByText("Retry"));
   await waitFor(() =>
-    expect(screen.getAllByRole("button", { name: /^Version / })).toHaveLength(
-      HISTORY_PAGE + 1,
-    ),
+    expect(
+      screen.getAllByRole("button", { name: /^Instructions / }),
+    ).toHaveLength(HISTORY_PAGE + 1),
   );
   expect(screen.queryByText(/aren't loaded|Couldn't load/)).toBeNull();
 
-  fireEvent.click(screen.getByRole("button", { name: /^Version · Current/ }));
+  fireEvent.click(
+    screen.getByRole("button", { name: /^Instructions · Current/ }),
+  );
   expect(
     within(within(screen.getByRole("dialog")).getByRole("heading")).getByText(
       "Current",
@@ -147,7 +185,7 @@ it("pages older history, labels the gap, shows a diff and reverts on the head", 
 
   fireEvent.click(screen.getByRole("button", { name: "Close" }));
   fireEvent.click(
-    screen.getAllByRole("button", { name: /^Version / })[1] as HTMLElement,
+    screen.getAllByRole("button", { name: /^Instructions / })[1] as HTMLElement,
   );
   expect(within(screen.getByRole("dialog")).queryByText("Current")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Revert to this" }));
@@ -166,7 +204,7 @@ it("labels a predecessor missing from complete history unavailable", async () =>
     rev("r0", undefined, "a"),
   ];
   render(
-    <AgentConfigHistory
+    <History
       expected={expected}
       head={undefined}
       read={read}
@@ -175,10 +213,16 @@ it("labels a predecessor missing from complete history unavailable", async () =>
   );
   expect(
     await screen.findByText(
-      "A revision here isn't available (removed or expired).",
+      "Instructions: A revision here isn't available (removed or expired).",
     ),
   ).toBeInTheDocument();
-  expect(screen.getAllByRole("list")).toHaveLength(2);
+  // The track reports its history in an effect; wait for the feed's commit too.
+  expect(await screen.findByText("2 versions")).toBeVisible();
+  expect(
+    within(
+      screen.getByRole("list", { name: "Previous versions" }),
+    ).getAllByRole("listitem"),
+  ).toHaveLength(2);
   expect(screen.queryByRole("button", { name: "Revert to this" })).toBeNull();
 });
 
@@ -190,15 +234,14 @@ it("shows an invalid revision honestly and never offers to revert to it", async 
     rev("r0", undefined, "first"),
   ];
   render(
-    <AgentConfigHistory
-      expected={expected}
-      head={head}
-      read={read}
-      onRevert={vi.fn()}
-    />,
+    <History expected={expected} head={head} read={read} onRevert={vi.fn()} />,
   );
-  expect(await screen.findByText(/^Version · Not valid/)).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: /^Version · Not valid/ }));
+  expect(
+    await screen.findByText(/^Instructions · Not valid/),
+  ).toBeInTheDocument();
+  fireEvent.click(
+    screen.getByRole("button", { name: /^Instructions · Not valid/ }),
+  );
   expect(screen.queryByRole("button", { name: "Revert to this" })).toBeNull();
   expect(
     screen.getByText(
@@ -218,16 +261,11 @@ it("shows a failed revert beside the revision, keeps history and allows retry", 
       }),
   );
   render(
-    <AgentConfigHistory
-      expected={expected}
-      head={head}
-      read={read}
-      onRevert={onRevert}
-    />,
+    <History expected={expected} head={head} read={read} onRevert={onRevert} />,
   );
   const button = () => screen.getByRole("button", { name: "Revert to this" });
   fireEvent.click(
-    await screen.findByRole("button", { name: /^Version (?!·)/ }),
+    await screen.findByRole("button", { name: /^Instructions (?!·)/ }),
   );
   fireEvent.click(button());
   await waitFor(() => expect(button()).toHaveAttribute("aria-busy", "true"));
@@ -269,18 +307,20 @@ it("opens a version by keyboard, shows a missing predecessor honestly, and resto
   const user = userEvent.setup();
   const head = rev("r2", "r1", "new");
   render(
-    <AgentConfigHistory
+    <History
       expected={expected}
       head={head}
       read={async () => [head]}
       onRevert={vi.fn()}
     />,
   );
-  const row = await screen.findByRole("button", { name: /^Version · Current/ });
+  const row = await screen.findByRole("button", {
+    name: /^Instructions · Current/,
+  });
   row.focus();
   await user.keyboard("{Enter}");
   const dialog = screen.getByRole("dialog", {
-    name: "History version Current",
+    name: "Instructions version Current",
   });
   expect(
     within(dialog).getByText(/previous revision isn't loaded/),
@@ -293,11 +333,10 @@ it("opens a version by keyboard, shows a missing predecessor honestly, and resto
 
 it("does not mark a missing revision current when the track has no head", async () => {
   render(
-    <AgentConfigHistory
+    <History
       expected={expected}
       head={undefined}
       selected="missing"
-      onSelect={vi.fn()}
       read={async () => []}
       onRevert={vi.fn()}
     />,
@@ -305,7 +344,9 @@ it("does not mark a missing revision current when the track has no head", async 
   expect(
     await screen.findByText("This version isn't in the loaded history."),
   ).toBeVisible();
-  expect(screen.getByRole("dialog", { name: "History version" })).toBeVisible();
+  expect(
+    screen.getByRole("dialog", { name: "Instructions version" }),
+  ).toBeVisible();
   expect(within(screen.getByRole("dialog")).queryByText("Current")).toBeNull();
 });
 
@@ -319,7 +360,7 @@ it("shows deletion details without offering to restore the deletion itself", asy
     ],
   };
   render(
-    <AgentConfigHistory
+    <History
       expected={expected}
       head={deleted}
       read={async () => [deleted, rev("r0", undefined, "old")]}
@@ -327,34 +368,36 @@ it("shows deletion details without offering to restore the deletion itself", asy
     />,
   );
   fireEvent.click(
-    await screen.findByRole("button", { name: /^Version · Deleted · Current/ }),
+    await screen.findByRole("button", {
+      name: /^Instructions · Deleted · Current/,
+    }),
   );
   expect(
     screen.getByText("This version removed this configuration."),
   ).toBeVisible();
   expect(screen.queryByRole("button", { name: "Restore this" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Close" }));
-  fireEvent.click(screen.getByRole("button", { name: /^Version (?!·)/ }));
+  fireEvent.click(screen.getByRole("button", { name: /^Instructions (?!·)/ }));
   expect(screen.getByRole("button", { name: "Restore this" })).toBeVisible();
 });
 
 it("loads an older page from a cold version dialog before offering its restore action", async () => {
-  const revisions = Array.from({ length: HISTORY_PAGE + 1 }, (_, i) =>
-    rev(`r${i}`, i ? `r${i - 1}` : undefined, `line ${i}`),
-  ).reverse();
+  const revisions = Array.from({ length: HISTORY_PAGE + 1 }, (_, i) => ({
+    ...rev(`r${i}`, i ? `r${i - 1}` : undefined, `line ${i}`),
+    created_at: 1_700_000_000 + i,
+  })).reverse();
   const read: SnapshotRead = async ([filter]) =>
     revisions.slice(
       filter?.offset ?? 0,
       (filter?.offset ?? 0) + (filter?.limit ?? 0),
     );
   render(
-    <AgentConfigHistory
+    <History
       expected={expected}
       head={revisions[0]}
       read={read}
       onRevert={vi.fn()}
       selected="r0"
-      onSelect={vi.fn()}
     />,
   );
   const dialog = within(screen.getByRole("dialog"));

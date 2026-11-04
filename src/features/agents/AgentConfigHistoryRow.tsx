@@ -135,7 +135,6 @@ function HistoryRow({
               {history.sides.map(({ side, expected, head, version }) => (
                 <AgentConfigHistory
                   key={`${expected.channel}/${expected.d}`}
-                  showRevisions={false}
                   selected={selected?.side === side ? selected.id : undefined}
                   onSelect={(id) => setSelected(id ? { side, id } : undefined)}
                   title={side === "settings" ? "Settings" : "Instructions"}

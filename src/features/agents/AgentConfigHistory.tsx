@@ -7,7 +7,6 @@ import { relativeTimestamp } from "../../shared/relative-timestamp";
 import type { RelayEvent } from "../relay/events";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Button } from "../../shared/design-system/ui/Button";
-import { InlineHeader } from "../../shared/design-system/ui/Header";
 import {
   artifactOp,
   type Expected,
@@ -70,9 +69,7 @@ export function AgentConfigHistory({
   onHistoryChange,
   selected,
   onSelect,
-  showRevisions = true,
 }: {
-  showRevisions?: boolean;
   selected?: string | undefined;
   onSelect?: ((id?: string) => void) | undefined;
   expected: Expected;
@@ -258,18 +255,12 @@ export function AgentConfigHistory({
     !deleted &&
     !revisionProblem(expected, event, settings);
   return (
-    <section
-      className={showRevisions ? styles.history : "contents"}
-      aria-label={title}
-    >
-      {showRevisions && <InlineHeader title={title} />}
+    <section className="contents" aria-label={title}>
       {!history.revisions.length &&
         !history.failed &&
-        (showRevisions || (!loading && history.next > 0)) && (
-          <p className="text-body-sm">
-            {!showRevisions && `${title}: `}
-            {loading ? "Loading history…" : "No revisions returned."}
-          </p>
+        !loading &&
+        history.next > 0 && (
+          <p className="text-body-sm">{title}: No revisions returned.</p>
         )}
       {!history.revisions.length && history.failed && (
         <div className={styles.gap}>
@@ -278,26 +269,7 @@ export function AgentConfigHistory({
         </div>
       )}
       {all.map((segment) =>
-        showRevisions ? (
-          <ol className={styles.list} key={segment.revisions[0]?.id}>
-            {segment.revisions.map((event) => (
-              <AgentConfigVersionRow
-                key={event.id}
-                event={event}
-                head={head}
-                expected={expected}
-                settings={settings}
-                onSelect={() => setOpen(event.id)}
-              />
-            ))}
-            {segment.gap && (
-              <li className={styles.gap}>
-                <span className={styles.label}>{GAP_TEXT[segment.gap]}</span>
-                {gapAction(segment.gap)}
-              </li>
-            )}
-          </ol>
-        ) : segment.gap ? (
+        segment.gap ? (
           <div className={styles.gap} key={segment.revisions[0]?.id}>
             <span className={`text-caption ${styles.label}`}>
               {title}: {GAP_TEXT[segment.gap]}
@@ -379,7 +351,7 @@ export function AgentConfigHistory({
   );
 }
 
-/** The same compact version target in a track or the combined feed. */
+/** A compact version target in the combined feed. */
 export function AgentConfigVersionRow({
   event,
   head,
