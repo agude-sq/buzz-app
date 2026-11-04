@@ -26,10 +26,17 @@ export const IDLE_MS = 15 * 60_000;
  * for every plugin, so plugins not on this client keep room. */
 export const POOL_LIMIT = 48;
 
+/** The most session ids a conversation keeps: each reopening starts one. */
+export const SAVED_SESSIONS = 10;
+
 /** What is saved for one conversation: when its session last took in a
- * message or ended a turn. */
-export type SavedConversation = Readonly<{ at: number }>;
+ * message or ended a turn, and the ids of its sessions, newest first. */
+export type SavedConversation = Readonly<{
+  at: number;
+  sessions?: readonly string[];
+}>;
 export type SessionStore = {
+  get(key: string): SavedConversation | undefined;
   set(key: string, saved: SavedConversation): void;
 };
 
@@ -591,7 +598,18 @@ export class AgentSessions {
    * has been shown, and restarts its idle countdown. */
   private touch(key: string, live: Live, seen?: number) {
     live.at = Date.now();
-    this.options.store?.set(key, { at: live.at });
+    const { store } = this.options;
+    if (store) {
+      const { id } = live.session;
+      const sessions = store.get(key)?.sessions ?? [];
+      store.set(key, {
+        at: live.at,
+        sessions: [id, ...sessions.filter((kept) => kept !== id)].slice(
+          0,
+          SAVED_SESSIONS,
+        ),
+      });
+    }
     this.countdown(key, live);
     if (seen !== undefined)
       this.shown.set(key, Math.max(seen, this.shown.get(key) ?? 0));

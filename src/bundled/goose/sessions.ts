@@ -92,6 +92,7 @@ export function localSessions(
       .sort(([, a], [, b]) => b.at - a.at);
   return {
     list: () => list(readAll()[agent]),
+    get: (key) => readAll()[agent]?.[key],
     set: (key, saved) => {
       const all = readAll();
       const kept = list({ ...all[agent], [key]: saved }).slice(0, SAVED_LIMIT);

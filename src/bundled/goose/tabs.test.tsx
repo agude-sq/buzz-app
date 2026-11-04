@@ -674,22 +674,25 @@ it("says when the bundled goose-acp is missing, and tries again", async () => {
   );
 });
 
-it("lists the agent's goose sessions and shows one's transcript", async () => {
-  const agent = "c".repeat(64);
+const ROOT = "1".repeat(64);
+const GANDER = "c".repeat(64);
+
+/** goose's history with one session Gander ran in #general's thread. */
+function gooseHistory() {
   const context = [
     "<context>",
     "Scope: thread",
     "Session scope: thread",
     "Channel: general (#chan)",
-    `Thread root: ${"1".repeat(64)}`,
-    `Agent: ${agent}`,
+    `Thread root: ${ROOT}`,
+    `Agent: ${GANDER}`,
     "</context>",
     "",
     '<buzz-event type="@mention">',
     "Content: @Gander what's up?",
     "</buzz-event>",
   ].join("\n");
-  const fake = fakeSpawn({
+  return fakeSpawn({
     home: "/home/test",
     history: [
       {
@@ -725,140 +728,23 @@ it("lists the agent's goose sessions and shows one's transcript", async () => {
       },
     ],
   });
+}
+
+/** Gander's Activity tab, with `saved` as the conversations Buzz saved. */
+function activity(
+  fake: ReturnType<typeof fakeSpawn>,
+  saved: ReturnType<GooseRuntime["conversations"]>,
+  history = new GooseHistory(fake),
+  props: Partial<
+    Parameters<ReturnType<typeof createTabs>["ActivityTab"]>[0]
+  > = {},
+) {
   // The runtime keeps one snapshot until its sessions change.
   const none: never[] = [];
   const runtime = {
     subscribe: () => () => {},
     sessions: () => none,
-    prompts: () => ({ shown: (turns: unknown) => turns }),
-  } as unknown as GooseRuntime;
-  const { ActivityTab } = createTabs({
-    setup: new GooseSetup(fake),
-    runtime,
-    history: new GooseHistory(fake),
-  });
-  render(
-    <ActivityTab
-      agent={
-        {
-          key: agent,
-          pubkey: agent,
-          name: "Gander",
-          type: "buzz.goose/goose",
-          owner: "a".repeat(64),
-          config: DEFAULT_CONFIG,
-        } as Agent<Config>
-      }
-    />,
-  );
-  const user = userEvent.setup();
-  expect(await screen.findByText("#general · 11111111")).toBeInTheDocument();
-  await user.click(
-    screen.getByRole("button", {
-      name: "View transcript: #general · 11111111",
-    }),
-  );
-  expect(await screen.findByText("Hi from goose")).toBeInTheDocument();
-  expect(screen.getAllByText(/@Gander what's up\?/).length).toBeGreaterThan(0);
-});
-
-it("opens a session transcript its history lookup finds after the profile shows", async () => {
-  // No running session knows the thread, so goose's history finds it only
-  // after the profile is shown.
-  const agent = "c".repeat(64);
-  const context = [
-    "<context>",
-    "Scope: thread",
-    "Session scope: thread",
-    "Channel: general (#chan)",
-    `Thread root: ${"1".repeat(64)}`,
-    `Agent: ${agent}`,
-    "</context>",
-    "",
-    '<buzz-event type="@mention">',
-    "Content: @Gander what's up?",
-    "</buzz-event>",
-  ].join("\n");
-  const fake = fakeSpawn({
-    home: "/home/test",
-    history: [
-      {
-        sessionId: "s1",
-        title: "Gander · #general · 11111111",
-        cwd: "/home/test/.buzz",
-        updatedAt: "2027-01-15T08:00:00Z",
-        conversation: [
-          {
-            role: "user",
-            created: 1_800_000_000,
-            content: [{ type: "text", text: context }],
-            metadata: { userVisible: true },
-          },
-          {
-            role: "assistant",
-            created: 1_800_000_001,
-            content: [
-              {
-                type: "toolRequest",
-                id: "t1",
-                toolCall: {
-                  status: "success",
-                  value: {
-                    name: "buzz__send",
-                    arguments: { text: "Hi from goose", final: true },
-                  },
-                },
-              },
-            ],
-          },
-        ],
-      },
-    ],
-  });
-  // The runtime keeps one snapshot until its sessions change.
-  const none: never[] = [];
-  const runtime = {
-    subscribe: () => () => {},
-    sessions: () => none,
-    prompts: () => ({ shown: (turns: unknown) => turns }),
-  } as unknown as GooseRuntime;
-  const { ActivityTab } = createTabs({
-    setup: new GooseSetup(fake),
-    runtime,
-    history: new GooseHistory(fake),
-  });
-  const done = vi.fn();
-  render(
-    <ActivityTab
-      agent={
-        {
-          key: agent,
-          pubkey: agent,
-          name: "Gander",
-          type: "buzz.goose/goose",
-          owner: "a".repeat(64),
-          config: DEFAULT_CONFIG,
-        } as Agent<Config>
-      }
-      conversation={{ channelId: "chan", rootId: "1".repeat(64) }}
-      initialTranscript={{ opening: 1, done }}
-    />,
-  );
-  expect(await screen.findByText("Hi from goose")).toBeInTheDocument();
-  expect(done).toHaveBeenCalledTimes(1);
-});
-
-it("says it is reading goose's sessions until the list arrives", async () => {
-  const fake = fakeSpawn({ home: "/home/test" });
-  const history = new GooseHistory(fake);
-  let release: (rows: never[]) => void = () => {};
-  const recent = vi
-    .spyOn(history, "recent")
-    .mockReturnValue(new Promise((resolve) => (release = resolve)));
-  const none: never[] = [];
-  const runtime = {
-    subscribe: () => () => {},
-    sessions: () => none,
+    conversations: () => saved,
     prompts: () => ({ shown: (turns: unknown) => turns }),
   } as unknown as GooseRuntime;
   const { ActivityTab } = createTabs({
@@ -866,32 +752,83 @@ it("says it is reading goose's sessions until the list arrives", async () => {
     runtime,
     history,
   });
-  render(
+  return render(
     <ActivityTab
       agent={
         {
-          key: "c".repeat(64),
-          pubkey: "c".repeat(64),
+          key: GANDER,
+          pubkey: GANDER,
           name: "Gander",
           type: "buzz.goose/goose",
           owner: "a".repeat(64),
           config: DEFAULT_CONFIG,
         } as Agent<Config>
       }
+      {...props}
     />,
   );
-  try {
-    await waitFor(() => expect(recent).toHaveBeenCalled());
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Reading goose's sessions…",
-    );
-  } finally {
-    release([]);
-  }
-  expect(
-    await screen.findByText(/^None\. A conversation's session starts/),
-  ).toBeInTheDocument();
-  expect(screen.queryByText("Reading goose's sessions…")).toBeNull();
+}
+
+const searches = (fake: ReturnType<typeof fakeSpawn>) =>
+  fake.geese
+    .flatMap((goose) => goose.received)
+    .filter((message) => message.method === "session/list");
+
+it("lists the agent's saved conversations and reads one's transcript by id, without searching goose", async () => {
+  const fake = gooseHistory();
+  activity(fake, [{ key: `chan/${ROOT}`, at: 1, sessions: ["s1"] }]);
+  const user = userEvent.setup();
+  await user.click(
+    screen.getByRole("button", {
+      name: "View transcript: chan · thread 11111111",
+    }),
+  );
+  expect(await screen.findByText("Hi from goose")).toBeInTheDocument();
+  expect(screen.getAllByText(/@Gander what's up\?/).length).toBeGreaterThan(0);
+  expect(searches(fake)).toEqual([]);
+});
+
+it("searches goose's history for a conversation with no saved session only when asked", async () => {
+  const fake = gooseHistory();
+  const done = vi.fn();
+  activity(fake, [], undefined, {
+    conversation: { channelId: "chan", rootId: ROOT },
+    initialTranscript: { opening: 1, done },
+  });
+  const search = await screen.findByRole("button", {
+    name: "Search older sessions",
+  });
+  expect(done).toHaveBeenCalledTimes(1);
+  expect(searches(fake)).toEqual([]);
+  await userEvent.setup().click(search);
+  expect(await screen.findByText("Hi from goose")).toBeInTheDocument();
+  expect(searches(fake)).toHaveLength(1);
+});
+
+it("cancels reading goose's history when Activity is left", async () => {
+  const fake = gooseHistory();
+  const history = new GooseHistory(fake);
+  let signal: AbortSignal | undefined;
+  const transcript = vi
+    .spyOn(history, "transcript")
+    .mockImplementation((_, given) => {
+      signal = given;
+      return new Promise(() => {});
+    });
+  const { unmount } = activity(
+    fake,
+    [{ key: `chan/${ROOT}`, at: 1, sessions: ["s1"] }],
+    history,
+  );
+  await userEvent.setup().click(
+    screen.getByRole("button", {
+      name: "View transcript: chan · thread 11111111",
+    }),
+  );
+  await waitFor(() => expect(transcript).toHaveBeenCalled());
+  expect(signal?.aborted).toBe(false);
+  unmount();
+  expect(signal?.aborted).toBe(true);
 });
 
 it("edits Goose device defaults without creating an agent override", async () => {

@@ -70,7 +70,7 @@ const setup = (
       pool,
       ...(onChange && { onChange }),
       ...(store && {
-        store: { set: (key: string, saved) => void store.set(key, saved) },
+        store,
       }),
       launch: async () => settings,
       choice: () => choice,
@@ -475,13 +475,39 @@ describe("AgentSessions", () => {
     const { sessions } = setup({}, false, { store });
     await sessions.deliver("a", "one", 1);
     const at = sessions.snapshot()[0]?.at;
-    expect(store.get("a")).toEqual({ at });
+    expect(store.get("a")).toEqual({ at, sessions: ["session-1"] });
     await vi.advanceTimersByTimeAsync(IDLE_MS);
     expect(sessions.snapshot()).toEqual([]);
-    expect(store.get("a")).toEqual({ at });
+    expect(store.get("a")).toEqual({ at, sessions: ["session-1"] });
     // A one-off turn joins no conversation.
     await sessions.runOnce("watch/x", () => "look");
     expect([...store.keys()]).toEqual(["a"]);
+  });
+
+  it("keeps a conversation's session ids as each message and reopening saves it, newest first", async () => {
+    vi.useFakeTimers();
+    const store = new Map<string, SavedConversation>([
+      [
+        "a",
+        { at: 1, sessions: Array.from({ length: 10 }, (_, i) => `old-${i}`) },
+      ],
+    ]);
+    const { sessions } = setup({}, false, { store });
+    await sessions.deliver("a", "one", 1);
+    await sessions.deliver("a", "two", 2);
+    const first = store.get("a")?.sessions;
+    expect(first?.[0]).toBe(sessions.snapshot()[0]?.sessionId);
+    expect(first).toHaveLength(10);
+    expect(first?.at(-1)).toBe("old-8");
+    await vi.advanceTimersByTimeAsync(IDLE_MS);
+    await sessions.deliver("a", "three", 3);
+    const reopened = sessions.snapshot()[0]?.sessionId;
+    expect(reopened).not.toBe(first?.[0]);
+    expect(store.get("a")?.sessions?.slice(0, 3)).toEqual([
+      reopened,
+      first?.[0],
+      "old-0",
+    ]);
   });
 
   it("dates a session by the messages it takes in and the turns it ends, not by a long turn keeping it open", async () => {
@@ -531,7 +557,7 @@ describe("AgentSessions", () => {
       tools,
       process: new SharedProcess(fake, fake.serve),
       pool: new ServerPool(),
-      store: { set: (key, saved) => void store.set(key, saved) },
+      store,
       launch: async () => {
         await held;
         return { workspace: "/w", systemPrompt: "" };
@@ -899,6 +925,12 @@ it("keeps saved conversations per agent in storage, most recent first", () => {
     ["c/root", { at: 1 }],
   ]);
   expect(localSessions(storage, "two").list()).toEqual([["c/root", { at: 2 }]]);
+  expect(one.get("dm")).toEqual({ at: 3 });
+  one.set("dm", { at: 4, sessions: ["s1"] });
+  expect(localSessions(storage, "one").get("dm")).toEqual({
+    at: 4,
+    sessions: ["s1"],
+  });
   data.set("buzz.goose.sessions.v1", "not json");
   expect(one.list()).toEqual([]);
 });

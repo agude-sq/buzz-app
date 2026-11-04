@@ -239,7 +239,7 @@ export class GooseRuntime {
   conversations(agent: AgentKey) {
     return localSessions(this.storage, agent)
       .list()
-      .map(([key, { at }]) => ({ key, at }));
+      .map(([key, { at, sessions = [] }]) => ({ key, at, sessions }));
   }
   subscribe(listener: () => void) {
     this.listeners.add(listener);

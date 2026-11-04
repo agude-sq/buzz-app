@@ -121,6 +121,8 @@ type Row = Readonly<{
   channelId: string;
   root?: string;
   at?: number;
+  /** The goose sessions saved for its place. */
+  sessions?: readonly string[];
 }>;
 const placeOf = (key: string): Place => {
   const [channelId = key, root] = key.split("/");
@@ -730,6 +732,8 @@ export function createTabs({
     >();
     const [loading, setLoading] = useState(true);
     const [attempt, setAttempt] = useState(0);
+    // Searching goose's history takes seconds, so only on request.
+    const [search, setSearch] = useState(false);
     // A turn ending rereads, so its last steps show without a Refresh.
     // biome-ignore lint/correctness/useExhaustiveDependencies: attempt is the explicit Refresh.
     useEffect(() => {
@@ -740,8 +744,9 @@ export function createTabs({
           {
             agent: agent.key,
             workspace,
-            sessionId: row.sessionId,
-            ...(row.channelId ? { place: placeOf(row.key) } : {}),
+            ...(row.sessionId ? { sessionId: row.sessionId } : {}),
+            ...(row.sessions ? { sessions: row.sessions } : {}),
+            ...(row.channelId ? { place: placeOf(row.key), search } : {}),
             ...(working ? { working } : {}),
           },
           abort.signal,
@@ -766,7 +771,7 @@ export function createTabs({
           setLoading(false);
         });
       return () => abort.abort();
-    }, [row, workspace, working, attempt]);
+    }, [row, workspace, working, attempt, search]);
     return (
       <div className="grid gap-4">
         <div>
@@ -783,6 +788,24 @@ export function createTabs({
           <p role="status" className="m-0">
             Reading the goose session…
           </p>
+        ) : read.status === "missing" && row.channelId && !search ? (
+          <div className="grid gap-2">
+            <p className="m-0 text-body-sm text-subtle">
+              Buzz saved no goose session for this conversation. One from an
+              earlier version of Buzz can be found by searching goose's history,
+              which can take a while.
+            </p>
+            <div>
+              <Button
+                type="button"
+                variant="subtle"
+                size="sm"
+                onClick={() => setSearch(true)}
+              >
+                Search older sessions
+              </Button>
+            </div>
+          </div>
         ) : read.status === "missing" ? (
           <p className="m-0 text-body-sm text-subtle">
             goose has no session for this conversation on this computer. It may
@@ -826,10 +849,20 @@ export function createTabs({
     close?: AgentViewProps<Config>["close"];
     openConversation?: AgentViewProps<Config>["openConversation"];
   }) {
-    const workspace = readConfig(agent.config).workspace;
     const live = useSyncExternalStore(
       (listener) => runtime.subscribe(listener),
       () => runtime.sessions(agent.key),
+    );
+    // Each conversation's saved sessions, read by id: no search of goose.
+    const saved = runtime.conversations(agent.key).map(
+      ({ key, at, sessions }): Row => ({
+        key,
+        sessionId: sessions[0] ?? "",
+        title: "",
+        ...placeOf(key),
+        at,
+        sessions,
+      }),
     );
     const running = live.map(
       (session): Row => ({
@@ -837,6 +870,7 @@ export function createTabs({
         sessionId: session.sessionId ?? "",
         title: "",
         ...placeOf(session.key),
+        sessions: saved.find((row) => row.key === session.key)?.sessions ?? [],
       }),
     );
     const {
@@ -844,25 +878,16 @@ export function createTabs({
       searching,
       error: lookupError,
     } = useOpenedSession(
-      running.filter((row) => row.sessionId),
+      [...running.filter((row) => row.sessionId), ...saved],
       conversation,
-      async (place, signal) => {
-        const found = await history.find(agent.key, workspace, place, signal);
-        return (
-          found && {
-            ...found,
-            ...place,
-            key: place.root
-              ? `${place.channelId}/${place.root}`
-              : place.channelId,
-          }
-        );
-      },
+      // Not saved: its transcript offers to search goose's history.
+      async (place) => ({
+        key: place.root ? `${place.channelId}/${place.root}` : place.channelId,
+        sessionId: "",
+        title: "",
+        ...place,
+      }),
     );
-    const [recent, reload] = useRead(() => {
-      const abort = new AbortController();
-      return history.recent(agent.key, workspace, abort.signal);
-    }, `${agent.key}\u0000${workspace}`);
     const busy = (sessionId: string) =>
       live.find((session) => session.sessionId === sessionId)?.busy;
     const status = (sessionId: string) => {
@@ -879,10 +904,9 @@ export function createTabs({
       initialTranscript && { initial: here, searching, ...initialTranscript },
       close,
     );
-    const rows = (recent.value ?? [])
-      .filter((row) => row.sessionId !== here?.sessionId)
-      .slice(0, RECENT_LIMIT)
-      .map((row): Row => ({ ...row, key: row.sessionId, channelId: "" }));
+    const rows = saved
+      .filter((row) => row.key !== here?.key)
+      .slice(0, RECENT_LIMIT);
     return (
       <div className={activityStyles.activity}>
         {conversation && (
@@ -897,25 +921,8 @@ export function createTabs({
           />
         )}
         <section className={activityStyles.section}>
-          <InlineHeader
-            title="Recent sessions"
-            actions={
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                loading={recent.status === "loading"}
-                onClick={reload}
-              >
-                Refresh
-              </Button>
-            }
-          />
-          {recent.status === "error" ? (
-            <p role="alert" className="buzz-field-error m-0">
-              Could not list goose's sessions: {recent.error}
-            </p>
-          ) : rows.length ? (
+          <InlineHeader title="Recent sessions" />
+          {rows.length ? (
             <SettingsGroup layout="form">
               <ul className={activityStyles.list}>
                 {rows.map((row) => (
@@ -954,13 +961,9 @@ export function createTabs({
                 ))}
               </ul>
             </SettingsGroup>
-          ) : recent.status === "ready" ? (
+          ) : (
             <p className="m-0 text-body-sm text-subtle">
               None. A conversation's session starts when the agent is mentioned.
-            </p>
-          ) : (
-            <p role="status" className="m-0 text-body-sm text-subtle">
-              Reading goose's sessions…
             </p>
           )}
         </section>

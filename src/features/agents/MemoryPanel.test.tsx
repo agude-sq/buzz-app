@@ -108,7 +108,12 @@ it("shows core first, then other memories in Markdown accordions", async () => {
   expect(
     within(references).getByTitle(formatFullTimestamp(1_700_000_000)),
   ).toBeInTheDocument();
-  expect(within(references).getByText("Cold detail.")).toBeInTheDocument();
+  // A closed memory's body is not rendered until it opens.
+  expect(within(references).queryByText("Cold detail.")).toBeNull();
+  await user.click(
+    within(references).getByRole("button", { name: "mem/notes" }),
+  );
+  expect(within(references).getByText("Cold detail.")).toBeVisible();
   expect(within(references).queryByText("core")).not.toBeInTheDocument();
 });
 
