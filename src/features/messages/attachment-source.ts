@@ -65,8 +65,9 @@ export function safeOpenUrl(value: string): boolean {
   }
 }
 
-/** The signed or relay thumbnail of a gallery image, or undefined when it would
- * just be the original again (third-party images have no relay rendition). */
+/** The signed or relay thumbnail of a gallery image, when the relay or native
+ * proxy serves it and it is not just the original again. A third-party URL is
+ * never fetched as a preview. */
 export function attachmentPreview(
   attachment: Attachment,
   media: (url: string, size?: "small") => string | undefined,
@@ -74,5 +75,9 @@ export function attachmentPreview(
   const preview = attachment.previewUrl
     ? media(attachment.previewUrl)
     : media(attachment.url, "small");
-  return preview !== media(attachment.url) ? preview : undefined;
+  return preview &&
+    (isProxySource(preview) || isNativeMediaSource(preview)) &&
+    preview !== media(attachment.url)
+    ? preview
+    : undefined;
 }

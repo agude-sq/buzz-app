@@ -1656,8 +1656,8 @@ Unavailable media keeps the same reserved frame and displays its status within i
 Exceptionally small frames can clip the visible label while retaining the complete
 accessible status.
 Valid message-carried `imeta blurhash` is decoded locally into a 32×32 canvas in
-that same frame when it intersects the viewport. The message list fetches no
-thumbnail. The preview is removed entirely (including behind transparency) only after the lazy
+that same frame when it intersects the viewport. No thumbnail is fetched. The
+preview is removed entirely (including behind transparency) only after the lazy
 original decodes; failure retains the preview. Missing/invalid hashes or canvas
 failures keep the existing background. Syntax validation bounds hashes to 166
 base83 characters / 9×9 components; folding does no pixel work. Preview work is
@@ -1670,19 +1670,27 @@ bottom following, reading anchors and narrow layout in Chromium and WebKit.
 Image galleries in the expanded viewer switch to the chosen photo at once, with
 the 40px directional slide. Until its original has loaded and decoded, the photo
 shows a preview: in the media review, its relay thumbnail (the signed
-`previewUrl`, else the relay's 320px rendition) under a fixed blur; otherwise, or
-when there is no thumbnail (third-party images, a thumbnail that fails to load),
-a frame in its `imeta dim` aspect ratio painted with its BlurHash or a flat fill.
+`previewUrl`, else the relay's 320px rendition) under a fixed blur, fetched only
+through the relay or native media proxy; otherwise, or when there is no such
+thumbnail (third-party images and preview URLs, a thumbnail that fails to load),
+a frame in its `imeta dim` aspect ratio painted with its BlurHash or a flat fill
+(the inset surface on a panel, the media track on the viewer's black canvas).
 Without valid `dim` nothing stands in. A partial original is never painted: it
 is hidden until it loads and its preview fades out (`--duration-state`) once it
-has decoded; reduced motion drops the slide and the fade. A failed original keeps
-its preview. Copy and click-to-zoom act only on the decoded original. Opening the
-media review fetches every thumbnail. Each viewer decodes the next two originals
-in the direction of travel and the previous one at low priority, at most two at
-a time, skipping originals over 24 megapixels or 25 MB and Save-Data. Requests
-that leave that window are cancelled, including a photo left before it loaded.
-`tests/fixtures/gallery-latency/` records gallery navigation under per-photo
-latency.
+has decoded, or when the slide ends if it decoded during the slide; reduced
+motion drops the slide and the fade. Opening the viewer from a chat photo grows
+the loaded original alone; a preview still needed afterwards fades in. A failed
+original keeps its preview. Copy and click-to-zoom act only on the decoded
+original. Opening the media review fetches every relay thumbnail at low
+priority. Each viewer decodes the next two originals in the direction of travel
+and the previous one at low priority, at most two at a time, skipping originals
+over 24 megapixels or 25 MB and Save-Data. Requests that leave that window are
+cancelled by clearing their source, including a photo navigated away from before
+it loaded; Chromium aborts them, while WebKit finishes a cleared load unheld.
+`tests/browser/gallery-latency.spec.mjs` covers, in Chromium and WebKit, each
+press showing the chosen photo or its thumbnail within a frame, no element still
+holding a skipped original (and its aborted request, in Chromium), and an
+opening that grows the original without its thumbnail.
 
 ## Opening an exact message
 

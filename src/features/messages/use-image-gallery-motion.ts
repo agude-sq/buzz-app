@@ -81,6 +81,16 @@ export function useImageGalleryMotion(
     const finish = () => {
       for (const element of outgoing) element.style.visibility = "hidden";
       clear();
+      // The slide held the opacity of a preview whose original decoded
+      // meanwhile, so its own fade never started.
+      for (const element of arriving) {
+        if (!element.hasAttribute("data-gallery-ready")) continue;
+        const style = getComputedStyle(element);
+        element.animate([{ opacity: 1 }, { opacity: 0 }], {
+          duration: Number.parseFloat(style.transitionDuration) * 1000 || 0,
+          easing: style.transitionTimingFunction,
+        });
+      }
       setDeparting((current) => (current === departing ? undefined : current));
     };
     const distance = departing.direction * galleryMotion.distance;

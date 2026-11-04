@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { Profiler, useState } from "react";
+import { Profiler, StrictMode, useState } from "react";
 import userEvent from "@testing-library/user-event";
 import {
   act,
@@ -316,7 +316,12 @@ function gallery(
       </div>
     );
   }
-  return render(<Gallery />);
+  // As main.tsx does: React replays mount effects and ref callbacks in development.
+  return render(
+    <StrictMode>
+      <Gallery />
+    </StrictMode>,
+  );
 }
 
 it("navigates the gallery with buttons and left/right keys, resetting zoom and stopping at the ends", () => {
@@ -483,6 +488,24 @@ it("slides to the next photo's thumbnail at once and crossfades to its original 
   expect(animate.mock.results[4]?.value.cancel).toHaveBeenCalled();
 });
 
+it("fades the preview of an original that decoded mid-slide once the slide ends", async () => {
+  loadingImages();
+  const animate = stubAnimate();
+  gallery(undefined, thumbnail);
+  fireEvent.click(screen.getByRole("button", { name: "Next image" }));
+  const preview = arriving();
+  await decode(original());
+  expect(preview).toHaveAttribute("data-gallery-ready");
+  // The slide's own animation holds the preview's opacity until it ends.
+  expect(
+    animate.mock.contexts.filter((element) => element === preview),
+  ).toHaveLength(1);
+  act(() => animate.mock.results[1]?.value.onfinish?.());
+  const fade = animate.mock.calls.at(-1);
+  expect(animate.mock.contexts.at(-1)).toBe(preview);
+  expect(fade?.[0]).toEqual([{ opacity: 1 }, { opacity: 0 }]);
+});
+
 it("shows each photo during rapid navigation, never holding an earlier one", () => {
   loadingImages();
   const animate = stubAnimate();
@@ -506,6 +529,46 @@ it("shows each photo during rapid navigation, never holding an earlier one", () 
   ).toEqual(["https://fixture.test/two.thumb.jpg"]);
   mounted.unmount();
   expect(animate.mock.results.at(-1)?.value.cancel).toHaveBeenCalled();
+});
+
+it("treats a fresh element for a revisited photo as loading again", async () => {
+  loadingImages();
+  const animate = stubAnimate();
+  // Too large to warm, so no preload holds it once it leaves.
+  const photos = [
+    photo("one", { dimensions: { width: 8000, height: 6000 } }),
+    photo("two"),
+    photo("three"),
+  ];
+  gallery(photos, thumbnail);
+  const first = original();
+  await decode(first);
+  fireEvent.click(screen.getByRole("button", { name: "Next image" }));
+  act(() => animate.mock.results[1]?.value.onfinish?.());
+  expect(first).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Previous image" }));
+  const revisited = original();
+  expect(revisited).toHaveAttribute("src", "https://fixture.test/one.png");
+  expect(revisited).toHaveAttribute("data-gallery-loading");
+  expect(arriving()).toHaveAttribute(
+    "src",
+    "https://fixture.test/one.thumb.jpg",
+  );
+  expect(arriving()).not.toHaveAttribute("data-gallery-ready");
+  Object.defineProperties(revisited, {
+    naturalWidth: { value: 100 },
+    naturalHeight: { value: 100 },
+  });
+  vi.spyOn(stage(), "getBoundingClientRect").mockReturnValue(
+    new DOMRect(0, 0, 500, 400),
+  );
+  press(revisited, { x: 250, y: 200 });
+  expect(percent()).toBe("100%");
+  await decode(revisited);
+  expect(arriving()).toHaveAttribute("data-gallery-ready");
+  press(revisited, { x: 250, y: 200 });
+  expect(percent()).toBe("200%");
 });
 
 it("swaps straight to the next photo's thumbnail when reduced motion is requested", () => {
@@ -563,16 +626,71 @@ it("frames a photo in its own aspect ratio without a thumbnail or after one fail
   expect(arriving()).toHaveAttribute("data-gallery-preview", "fill");
   expect(arriving()).toHaveAttribute("width", "21");
   expect(arriving()).toHaveAttribute("height", "32");
-  // A thumbnail that failed to prefetch is not requested again.
+  // A thumbnail that failed to prefetch is not requested again. StrictMode's
+  // replay cancelled the first prefetch.
   const prefetch = assigned.mock.contexts[
-    assigned.mock.calls.findIndex(
-      ([value]) => value === "https://fixture.test/three.thumb.jpg",
-    )
+    assigned.mock.calls
+      .map(([value]) => value)
+      .lastIndexOf("https://fixture.test/three.thumb.jpg")
   ] as HTMLImageElement;
   fireEvent.error(prefetch);
   fireEvent.click(screen.getByRole("button", { name: "Next image" }));
   expect(arriving()).toBeNull();
   expect(original()).toHaveAttribute("src", "https://fixture.test/three.png");
+});
+
+it("prefetches thumbnails at low priority and keeps them while the gallery changes", () => {
+  // The selected photo's own preview stays mounted while its original loads.
+  loadingImages();
+  const assigned = vi.spyOn(HTMLImageElement.prototype, "src", "set");
+  const [one, two, three] = ["one", "two", "three"].map((name) => photo(name));
+  const stageWith = (photos: Attachment[]) => (
+    <StrictMode>
+      <ImageReviewStage
+        attachments={photos}
+        selectedUrl="https://fixture.test/two.png"
+        select={() => {}}
+        media={(url) => url}
+        preview={thumbnail}
+        onOpenLink={() => false}
+      />
+    </StrictMode>
+  );
+  // Prefetches are the detached images given a thumbnail.
+  const prefetches = (from = 0) =>
+    assigned.mock.calls.slice(from).flatMap(([value], index) => {
+      const image = assigned.mock.contexts[from + index] as HTMLImageElement;
+      return value?.endsWith(".thumb.jpg") && !image.isConnected ? [image] : [];
+    });
+  const held = () =>
+    prefetches()
+      .filter((image) => image.getAttribute("src"))
+      .map((image) => image.getAttribute("src"));
+  const view = render(stageWith([one, two] as Attachment[]));
+  expect(held()).toEqual(
+    [one, two].map((item) => thumbnail(item as Attachment)),
+  );
+  for (const image of prefetches())
+    if (image.getAttribute("src")) expect(image.fetchPriority).toBe("low");
+
+  // A reply adds a photo to the thread's gallery.
+  const before = assigned.mock.calls.length;
+  view.rerender(stageWith([one, two, three] as Attachment[]));
+  expect(prefetches(before).map((image) => image.getAttribute("src"))).toEqual([
+    thumbnail(three as Attachment),
+  ]);
+  expect(held()).toEqual(
+    [one, two, three].map((item) => thumbnail(item as Attachment)),
+  );
+  // An edit removes one.
+  const removed = assigned.mock.calls.length;
+  view.rerender(stageWith([two, three] as Attachment[]));
+  expect(
+    prefetches(removed).filter((image) => image.getAttribute("src")),
+  ).toEqual([]);
+  expect(held()).toEqual(
+    [two, three].map((item) => thumbnail(item as Attachment)),
+  );
 });
 
 it("copies and click-zooms only a decoded original", async () => {
@@ -614,14 +732,21 @@ function warming() {
   });
   const assigned = vi.spyOn(HTMLImageElement.prototype, "src", "set");
   const url = (name: string) => `https://fixture.test/${name}.png`;
-  gallery(["one", "two", "three", "four", "five"].map((name) => photo(name)));
+  let replayed = new Set<HTMLImageElement>();
   const warmers = () =>
     assigned.mock.calls.flatMap(([value], index) => {
       const image = assigned.mock.contexts[index] as HTMLImageElement;
-      return value && !image.hasAttribute("data-review-media")
+      return value &&
+        !image.hasAttribute("data-review-media") &&
+        !replayed.has(image)
         ? [{ value, image }]
         : [];
     });
+  gallery(["one", "two", "three", "four", "five"].map((name) => photo(name)));
+  // StrictMode replays the mount effects once, cancelling their first requests.
+  replayed = new Set(
+    warmers().flatMap(({ image }) => (image.getAttribute("src") ? [] : image)),
+  );
   const warmer = (name: string) => {
     const found = warmers().find(({ value }) => value === url(name));
     if (!found) throw new Error(`${name} was not preloaded`);

@@ -114,6 +114,8 @@ export function ImageReviewStage({
       setOriginal({ source, decoded: element.naturalWidth > 0, cached: true });
       return;
     }
+    // A fresh element for a source settled earlier starts loading again.
+    setOriginal(undefined);
     let active = true;
     const settle = (decoded: boolean) => {
       if (active) setOriginal({ source, decoded });
@@ -144,19 +146,6 @@ export function ImageReviewStage({
     attachments.map((item) => (warmable(item) ? media(item.url) : undefined)),
     selectedIndex,
     travel,
-  );
-  // An original left before it loaded keeps downloading only while it stays
-  // within the preload window.
-  const attachImage = useCallback(
-    (element: HTMLImageElement | null) => {
-      if (!element) return;
-      image.current = element;
-      return () => {
-        if (image.current === element) image.current = null;
-        release(element);
-      };
-    },
-    [release],
   );
   const nativeSource = source ? isNativeMediaSource(source) : false;
   const proxySource = source ? isProxySource(source) || nativeSource : false;
@@ -241,6 +230,9 @@ export function ImageReviewStage({
       const direction = index > selectedIndex ? 1 : -1;
       setTravel(direction);
       prepare(direction, decoded);
+      // An original left before it loaded keeps downloading only while it
+      // stays within the preload window.
+      if (image.current) release(image.current);
       setBoundedZoom(1);
       clearCopyNotice();
       const active = document.activeElement;
@@ -258,6 +250,7 @@ export function ImageReviewStage({
       selectedIndex,
       prepare,
       decoded,
+      release,
       clearCopyNotice,
     ],
   );
@@ -384,7 +377,7 @@ export function ImageReviewStage({
           <Fragment key={item.url}>
             {(current || item.decoded) && (
               <img
-                ref={current ? attachImage : undefined}
+                ref={current ? image : undefined}
                 data-review-media={current ? "" : undefined}
                 data-gallery-departing={!current ? "" : undefined}
                 data-gallery-loading={(current && loading) || undefined}

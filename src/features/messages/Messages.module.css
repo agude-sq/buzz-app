@@ -2830,10 +2830,15 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   object-fit: contain;
   transform-origin: center;
   pointer-events: none;
-  /* Flat frame fill. No designer-chosen media placeholder role yet; the track
-     fill reads on the black canvas. */
-  color: var(--bg-media-track);
+  /* Flat frame fill: the chat's own placeholder for a loading picture, which
+     follows the app mode where the stage sits on a panel. */
+  color: var(--surface-inset);
   transition: opacity var(--duration-state) var(--easing-state);
+}
+/* The viewer's black canvas would swallow the inset fill; the media track
+   reads on it in either app mode. */
+.mediaReviewViewer .imageReviewStage > [data-gallery-preview] {
+  color: var(--bg-media-track);
 }
 .imageReviewStage > [data-gallery-preview][data-gallery-departing] {
   z-index: 1;
@@ -2845,6 +2850,14 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 }
 .imageReviewStage > [data-gallery-preview][data-gallery-ready] {
   opacity: 0;
+}
+/* The entrance starts once the original has loaded, so it grows alone. A
+   preview still needed when it ends fades in. */
+.mediaReviewViewer[data-review-opening]
+  .imageReviewStage
+  > [data-gallery-preview] {
+  opacity: 0;
+  transition: none;
 }
 @media (prefers-reduced-motion: reduce) {
   .imageReviewStage > [data-gallery-preview] {

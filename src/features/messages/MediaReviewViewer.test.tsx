@@ -301,7 +301,8 @@ it("covers a loading photo with its relay thumbnail", async () => {
   const owner = createRelaySession({
     viewer: viewer.pubkey,
     relayAuthor: keypair().pubkey,
-    media: (url, size) => (size ? url.replace(/\.png$/, ".thumb.jpg") : url),
+    media: (url, size) =>
+      `/api/relay/media?url=${encodeURIComponent(size ? url.replace(/\.png$/, ".thumb.jpg") : url)}`,
     async query(filters) {
       if (filters.some((filter) => filter.ids?.includes(root.id)))
         return [root];
@@ -326,7 +327,10 @@ it("covers a loading photo with its relay thumbnail", async () => {
   expect(original).toHaveAttribute("data-gallery-loading");
   expect(
     original.parentElement?.querySelector("[data-gallery-preview]"),
-  ).toHaveAttribute("src", "https://fixture.test/image.thumb.jpg");
+  ).toHaveAttribute(
+    "src",
+    `/api/relay/media?url=${encodeURIComponent("https://fixture.test/image.thumb.jpg")}`,
+  );
 });
 
 it("Escape closes media opened from a tab without closing the tab", async () => {

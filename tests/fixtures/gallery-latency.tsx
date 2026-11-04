@@ -1,8 +1,8 @@
-// Thread grid plus media viewer over an 8-photo post, for recording gallery
-// navigation under latency (gallery-latency/record.mjs serves and delays the
+// Thread grid plus media viewer over an 8-photo post, for gallery navigation
+// under latency (tests/browser/gallery-latency.spec.mjs serves and holds the
 // media). `?blurhash=0` drops the BlurHashes, matching what this app sends.
 import { Context } from "@deepseek-ai/cordis";
-import { useRef, useState } from "react";
+import { StrictMode, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKeyboardFocusVisibility";
 import type { Attachment } from "../../src/features/relay/contracts";
@@ -126,4 +126,9 @@ function Fixture() {
 }
 const root = document.getElementById("root");
 if (!root) throw new Error("Missing fixture root");
-createRoot(root).render(<Fixture />);
+// As main.tsx does: development replays mount effects and ref callbacks.
+createRoot(root).render(
+  <StrictMode>
+    <Fixture />
+  </StrictMode>,
+);

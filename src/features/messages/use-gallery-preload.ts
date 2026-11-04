@@ -9,27 +9,38 @@ const MAX_WARM_PIXELS = 24_000_000;
 const MAX_WARM_BYTES = 25_000_000;
 
 /** Hold every gallery thumbnail so a selected image can show its preview at
- * once. Returns the thumbnails that failed: browsers retry a failed image for
- * each new element, so those images go straight to their fallback frame. */
+ * once, behind the visible original. Returns the thumbnails that failed:
+ * browsers retry a failed image for each new element, so those images go
+ * straight to their fallback frame. */
 export function usePrefetchedPreviews(sources: readonly string[]) {
   const [failed, setFailed] = useState<ReadonlySet<string>>(() => new Set());
+  const images = useRef(new Map<string, HTMLImageElement>());
   const key = sources.join("\n");
+  // Rows streaming into the thread change the list; held requests carry over.
   useEffect(() => {
-    if (!key) return;
-    const images = key.split("\n").map((source) => {
+    const wanted = new Set(key ? key.split("\n") : []);
+    for (const [source, image] of images.current) {
+      if (wanted.has(source)) continue;
+      abort(image);
+      images.current.delete(source);
+    }
+    for (const source of wanted) {
+      if (images.current.has(source)) continue;
       const image = new Image();
+      image.fetchPriority = "low";
       image.onerror = () =>
         setFailed((current) => new Set(current).add(source));
       image.src = source;
-      return image;
-    });
-    return () => {
-      for (const image of images) {
-        image.onerror = null;
-        image.src = "";
-      }
-    };
+      images.current.set(source, image);
+    }
   }, [key]);
+  useEffect(() => {
+    const held = images.current;
+    return () => {
+      for (const image of held.values()) abort(image);
+      held.clear();
+    };
+  }, []);
   return failed;
 }
 
@@ -44,19 +55,25 @@ export function warmable(attachment: Attachment): boolean {
 
 type Warmer = { image: HTMLImageElement; settled: boolean };
 
-// Clearing the source fires `error`, which must not count as settling.
-function cancel({ image, settled }: Warmer) {
-  if (settled) return;
+// Clearing the source fires `error`, which must not count as settling or failing.
+function abort(image: HTMLImageElement) {
   image.onload = image.onerror = null;
   image.src = "";
 }
 
+function cancel({ image, settled }: Warmer) {
+  if (!settled) abort(image);
+}
+
 /** Decode the next two originals in the direction of travel and the previous
- * one. Requests that leave that window are cancelled: a released `<img>` keeps
- * downloading in Chromium unless its source is cleared.
+ * one. Requests that leave that window are cancelled by clearing their source:
+ * a released `<img>` keeps downloading in Chromium otherwise. WebKit finishes a
+ * cleared load anyway, though nothing holds or paints it.
  *
- * Returns `release`, which takes over an original the viewer stopped showing
- * before it loaded, so it too is cancelled once it leaves the window. */
+ * Returns `release`, which navigation calls with the original it is leaving.
+ * One that has not loaded is taken over, so it too is cancelled once it leaves
+ * the window. A ref cleanup cannot tell: StrictMode detaches and reattaches
+ * the refs of a mounted element. */
 export function useWarmOriginals(
   sources: readonly (string | undefined)[],
   index: number,
