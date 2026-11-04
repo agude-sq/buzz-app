@@ -1724,6 +1724,13 @@ export class AgentsService extends Service implements Agents {
       agent: (key) => this.agent(key),
       member: (agent, event) => this.member(agent, event),
       reads: (agent, event) => this.reads(agent, event),
+      resolveChannels: async (agent, ids, signal) => {
+        const channels = this.bindingOf(agent)?.session.channels;
+        const unknown = ids.filter(
+          (id) => !this.channelOf(agent, { tags: [["h", id]] }),
+        );
+        if (unknown.length) await channels?.resolve?.(unknown, { signal });
+      },
       dm: (agent, event) => this.dm(agent, event),
       starting: (agent, channelId) =>
         this.bindingOf(agent)?.session.channelWrites.starting(channelId),

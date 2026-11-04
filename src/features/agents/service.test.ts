@@ -10562,6 +10562,100 @@ it.each(refusedChannels)(
   },
 );
 
+it("resolves an unopened public listening channel before admission and delivers its events", async () => {
+  const { service, run, emit, session } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  const { attention } = await handleOf(run, emit);
+  const target = refusedChannels[2];
+  let resolved = false;
+  const get = session.channels.get?.bind(session.channels);
+  vi.spyOn(session.channels, "get").mockImplementation((id) =>
+    id === target
+      ? resolved
+        ? { id, name: id, visibility: "public", members: [other] }
+        : undefined
+      : get?.(id),
+  );
+  const resolve = vi.fn(async (ids: readonly string[]) => {
+    expect(ids).toEqual([target]);
+    resolved = true;
+  });
+  Object.assign(session.channels, { resolve });
+  await callAttentionTool(attention, "watch_add", {
+    id: "unopened",
+    interest: "default",
+    expected_state: "object-v1:absent",
+    type: "event",
+    channels: [target],
+    kinds: [9],
+    since: 1,
+  });
+  expect(resolve).toHaveBeenCalledOnce();
+  const called = run.mock.calls.length;
+  emit({ events: [event("unopened-event", { tags: [["h", target]] })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(called + 1));
+  expect(run.mock.calls.at(-1)?.[0].trigger).toMatchObject({
+    type: "watch",
+    slug: "watch/unopened",
+  });
+  await expect(
+    callAttentionTool(attention, "watch_update", {
+      id: "unopened",
+      interest: "default",
+      expected_state: (await attention.show("watch/unopened")).expected_state,
+      channel: target,
+    }),
+  ).rejects.toThrow(/not a member.*delivery channel/i);
+});
+
+it.each(["private", "empty", "failed"] as const)(
+  "preserves a watch when listening metadata resolves %s",
+  async (result) => {
+    const { service, run, emit, session } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    await service.save(bot, { attentionEnabled: true });
+    const { attention } = await handleOf(run, emit);
+    await callAttentionTool(attention, "watch_add", {
+      id: "kept",
+      interest: "default",
+      expected_state: "object-v1:absent",
+      type: "event",
+      channels: [channel],
+      kinds: [9],
+      since: 1,
+    });
+    const before = await attention.show("watch/kept");
+    const target = refusedChannels[2];
+    let resolved = false;
+    const get = session.channels.get?.bind(session.channels);
+    vi.spyOn(session.channels, "get").mockImplementation((id) =>
+      id === target && resolved && result === "private"
+        ? { id, name: id, visibility: "private", members: [other] }
+        : get?.(id),
+    );
+    const resolve = vi.fn(async () => {
+      if (result === "failed") throw new Error("Metadata read failed");
+      resolved = true;
+    });
+    Object.assign(session.channels, { resolve });
+    await expect(
+      callAttentionTool(attention, "watch_update", {
+        id: "kept",
+        interest: "default",
+        expected_state: before.expected_state,
+        channels: [target],
+      }),
+    ).rejects.toThrow(
+      result === "failed"
+        ? /Metadata read failed/
+        : /cannot receive events.*channel/i,
+    );
+    expect(resolve).toHaveBeenCalledOnce();
+    expect(await attention.show("watch/kept")).toEqual(before);
+  },
+);
+
 it("uses one listening policy for watch admission and event delivery", async () => {
   const { service, run, emit, session } = await setup();
   watchChannelMetadata(session);

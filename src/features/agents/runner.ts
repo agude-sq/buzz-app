@@ -417,6 +417,12 @@ export type RunnerHost = {
    * channel is public; undefined as for `member`. Only a member may be
    * delivered to. */
   reads(agent: Agent, event: Pick<RelayEvent, "tags">): boolean | undefined;
+  /** Resolves listening metadata before an enabled watch is admitted. */
+  resolveChannels?(
+    agent: Agent,
+    channels: readonly string[],
+    signal: AbortSignal,
+  ): Promise<void>;
   /** Whether the event's channel is a DM between the agent and one other. */
   dm(agent: Agent, event: RelayEvent): boolean;
   /** While the owner is still starting this chat, settles once it can take
@@ -3096,15 +3102,23 @@ export class AgentRunners {
             if (value && value.type !== "interest" && value.enabled) {
               const agent = this.host.agent(key);
               if (!agent) throw new Error("This agent is no longer running");
-              if (value.type === "event" && value.channels !== "all")
+              if (value.type === "event" && value.channels !== "all") {
+                await this.host.resolveChannels?.(
+                  agent,
+                  value.channels,
+                  lifetime,
+                );
+                lifetime.throwIfAborted();
+                check?.();
                 for (const channel of value.channels)
                   if (
                     this.host.reads(agent, { tags: [["h", channel]] }) !== true
                   )
                     throw new AttentionError(
                       "invalid-operation",
-                      `Cannot receive events from channel ${channel}. Join it and wait for confirmed channel metadata before enabling this watch.`,
+                      `Cannot receive events from channel ${channel}. Check channel access and wait for confirmed metadata before enabling this watch.`,
                     );
+              }
               if (
                 value.channel &&
                 this.host.member(agent, { tags: [["h", value.channel]] }) !==
