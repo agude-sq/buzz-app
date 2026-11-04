@@ -1020,6 +1020,11 @@ it.each([
       const createAgent = vi.spyOn(agents, "create");
       await user.click(create);
       expect(createAgent).not.toHaveBeenCalled();
+      // jsdom does not focus invalid inputs as the browser does.
+      within(createDialog)
+        .getByRole("form", { name: "New agent" })
+        .querySelector<HTMLInputElement>('input[name="builderlab-model"]')
+        ?.focus();
       expect(model).toHaveFocus();
       expect(create).toBeEnabled();
       createAgent.mockRestore();

@@ -103,8 +103,7 @@ export function createCreationFields(
             tabIndex={-1}
             aria-hidden="true"
             onChange={() => {}}
-            onInvalid={(event) => {
-              event.preventDefault();
+            onFocus={() => {
               controls.current
                 ?.querySelector<HTMLButtonElement>(
                   'button[aria-haspopup="menu"]',

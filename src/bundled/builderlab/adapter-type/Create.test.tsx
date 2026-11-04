@@ -111,7 +111,7 @@ async function choose(label: string, value: string) {
   await user.click(await screen.findByRole("option", { name: value }));
 }
 
-it("blocks an empty model submit and focuses Model before accepting a supported pair", async () => {
+it("keeps the native missing-model message and forwards input focus to Model", async () => {
   const h = await fixture();
   await act(async () => h.pending.resolve());
   const model = await screen.findByRole("button", {
@@ -120,13 +120,27 @@ it("blocks an empty model submit and focuses Model before accepting a supported 
   const form = screen.getByRole("form", {
     name: "New Builderlab agent",
   }) as HTMLFormElement;
-  expect(form.checkValidity()).toBe(false);
+  const input = form.elements.namedItem("builderlab-model") as HTMLInputElement;
+  const invalid = vi.fn<(event: Event) => void>();
+  input.addEventListener("invalid", invalid);
   await userEvent
     .setup()
     .click(screen.getByRole("button", { name: "Create agent" }));
   expect(h.submit).not.toHaveBeenCalled();
+  expect(invalid).toHaveBeenCalledOnce();
+  expect(invalid.mock.calls[0][0].defaultPrevented).toBe(false);
+  expect(input.validity.valueMissing).toBe(true);
+  const message = input.validationMessage;
+  expect(message).not.toBe("");
+  // jsdom dispatches invalid but does not perform the browser's native focus step.
+  input.focus();
   expect(model).toHaveFocus();
   await choose("Model", "Sol 6.1");
+  expect(input.validationMessage).toBe("");
+  expect(
+    (form.elements.namedItem("builderlab-effort") as HTMLInputElement)
+      .validationMessage,
+  ).toBe(message);
   expect(form.checkValidity()).toBe(false);
   await choose("Thinking", "High");
   expect(form.checkValidity()).toBe(true);
