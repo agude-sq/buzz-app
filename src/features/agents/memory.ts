@@ -79,6 +79,38 @@ export async function memoryResponseText(response: Response): Promise<string> {
 }
 
 /** Validate the host DTO before retaining plaintext, including aggregate size. */
+/** An entry's share of a listing's text budget. */
+function entryBytes(entry: MemoryEntry) {
+  const { slug, body, eventId, createdAt } = entry;
+  return new TextEncoder().encode(
+    JSON.stringify({ slug, body, eventId, createdAt }),
+  ).length;
+}
+/** Every owner's kept listings, so a community switch can forget them all. */
+const owners = new Set<WeakRef<{ forget(): void }>>();
+/** Forgets every kept listing, fencing reads still in flight from keeping
+ * theirs. Sessions, views and runtime reads carry on. */
+export function forgetMemoryListings() {
+  for (const ref of owners) {
+    const owner = ref.deref();
+    if (owner) owner.forget();
+    else owners.delete(ref);
+  }
+}
+/** Forgets kept listings whenever the selected community changes: a retained
+ * session keeps its owner, but its listings must not outlive the selection. */
+export function forgetMemoryListingsOnSelection(communities: {
+  snapshot(): { selected: string | null };
+  subscribe(listener: () => void): () => void;
+}) {
+  let selected = communities.snapshot().selected;
+  return communities.subscribe(() => {
+    const next = communities.snapshot().selected;
+    if (next === selected) return;
+    selected = next;
+    forgetMemoryListings();
+  });
+}
 export function memoryListing(input: unknown): MemoryListing {
   const value = input as MemoryListing | null;
   if (
@@ -110,7 +142,7 @@ export function memoryListing(input: unknown): MemoryListing {
       eventId: entry.eventId,
       createdAt: entry.createdAt,
     };
-    bytes += new TextEncoder().encode(JSON.stringify(copy)).length;
+    bytes += entryBytes(copy);
     if (bytes > LISTING_TEXT_BYTES)
       throw new Error("Memory listing exceeds budget");
     return Object.freeze(copy);
@@ -162,10 +194,13 @@ export function createAgentMemories(
       release?: ReturnType<typeof setTimeout> | undefined;
     }
   >();
+  let keeping = 0;
   const forget = () => {
+    keeping++;
     for (const entry of kept.values()) clearTimeout(entry.release);
     kept.clear();
   };
+  owners.add(new WeakRef({ forget }));
   function open(agent: string) {
     if (closed || views.size >= 4) throw new Error("Memory views unavailable");
     const eligible = memoryAgent(agent, viewer);
@@ -208,7 +243,7 @@ export function createAgentMemories(
         }
         const owned = new AbortController();
         controller = owned;
-        const admitted = generation;
+        const admitted = keeping;
         const cached = kept.get(agent)?.listing;
         publish(
           cached
@@ -222,21 +257,43 @@ export function createAgentMemories(
             await retryRead((signal) => {
               // Each attempt starts its own listing; a page names its slugs'
               // newest heads, so a later page's entry replaces an earlier one.
-              const heads = new Map<string, MemoryEntry | undefined>(
-                cached?.entries.map((entry) => [entry.slug, entry]),
+              // Cached entries only fill in until fresh ones arrive; they
+              // give way, oldest first, to keep the listing within budget.
+              const stale = new Map(
+                [...(cached?.entries ?? [])]
+                  .sort((a, b) => a.createdAt - b.createdAt)
+                  .map((entry) => [entry.slug, entry]),
               );
+              const fresh = new Map<string, MemoryEntry>();
               return source(agent, signal, undefined, (page) => {
                 if (signal.aborted || !available()) return;
-                for (const entry of page.entries) heads.set(entry.slug, entry);
-                for (const entry of page.deleted ?? [])
-                  heads.set(entry.slug, undefined);
+                for (const entry of page.entries) {
+                  stale.delete(entry.slug);
+                  fresh.set(entry.slug, entry);
+                }
+                for (const entry of page.deleted ?? []) {
+                  stale.delete(entry.slug);
+                  fresh.delete(entry.slug);
+                }
+                let bytes = 0;
+                for (const entry of [...fresh.values(), ...stale.values()])
+                  bytes += entryBytes(entry);
+                for (const [slug, entry] of stale) {
+                  if (
+                    fresh.size + stale.size <= LISTING_ENTRIES &&
+                    bytes <= LISTING_TEXT_BYTES
+                  )
+                    break;
+                  stale.delete(slug);
+                  bytes -= entryBytes(entry);
+                }
                 publish({
                   status: "loading",
                   listing: Object.freeze({
                     entries: Object.freeze(
-                      [...heads.values()]
-                        .filter((entry) => entry !== undefined)
-                        .sort((a, b) => a.slug.localeCompare(b.slug)),
+                      [...fresh.values(), ...stale.values()].sort((a, b) =>
+                        a.slug.localeCompare(b.slug),
+                      ),
                     ),
                     partial: true,
                   }),
@@ -245,8 +302,7 @@ export function createAgentMemories(
             }, signal),
           );
           signal.throwIfAborted();
-          if (admitted === generation && available())
-            kept.set(agent, { listing });
+          if (admitted === keeping && available()) kept.set(agent, { listing });
           if (!owned.signal.aborted)
             publish(
               available()

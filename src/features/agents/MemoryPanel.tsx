@@ -90,10 +90,11 @@ function useMemory(memories: AgentMemories | undefined, pubkey: string) {
     const update = () => {
       if (!live) return;
       const next = view.snapshot();
-      // Keep a successful listing mounted while a manual refresh is in flight;
-      // every other transition, especially invalidation, replaces plaintext.
+      // Keep a successful listing mounted while a manual refresh has nothing
+      // to show yet; every other transition, especially invalidation and
+      // streamed pages, replaces it.
       setSnapshot((current) =>
-        next.status === "loading" && current.status === "ready"
+        next.status === "loading" && !next.listing && current.status === "ready"
           ? current
           : next,
       );

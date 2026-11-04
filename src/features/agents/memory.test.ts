@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import {
   createAgentMemories,
+  forgetMemoryListingsOnSelection,
   MEMORY_CACHE_MS,
   type MemoryListing,
   type MemoryReader,
@@ -120,3 +121,103 @@ it.each(["clear", "dispose"] as const)(
     view.dispose();
   },
 );
+
+/** A community selection that tests move by hand. */
+function selection(selected: string | null) {
+  const listeners = new Set<() => void>();
+  return {
+    snapshot: () => ({ selected }),
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    select(next: string | null) {
+      selected = next;
+      for (const listener of listeners) listener();
+    },
+  };
+}
+
+it.each([
+  ["another community and back", ["b", "a"]],
+  ["Personal space and back", [null, "a"]],
+])(
+  "forgets kept listings on switching to %s, while the session stays retained",
+  async (_name, moves) => {
+    const communities = selection("a");
+    const stop = forgetMemoryListingsOnSelection(communities);
+    const { read, answer } = pending();
+    const owner = createAgentMemories(read, viewer, () => true);
+    await readOnce(owner, answer, listing("from-a"));
+    // A refresh still in flight across the switch cannot keep its listing.
+    const view = owner.capability.open(agent);
+    const done = view.refresh();
+    for (const next of moves) communities.select(next);
+    answer(listing("late"));
+    await done;
+    view.dispose();
+    const back = owner.capability.open(agent);
+    void back.refresh();
+    expect(back.snapshot()).toEqual({ status: "loading" });
+    back.dispose();
+    stop();
+  },
+);
+
+const sized = (slug: string, bytes: number, createdAt = 1) => ({
+  slug: `mem/${slug}`,
+  body: "x".repeat(bytes),
+  eventId: "e".repeat(64),
+  createdAt,
+});
+
+it("evicts cached-only entries so cached and fresh pages stay within the byte budget", async () => {
+  const { read, answer, pages } = pending();
+  const owner = createAgentMemories(read, viewer, () => true);
+  const big = 60 * 1024;
+  await readOnce(owner, answer, {
+    entries: Array.from({ length: 90 }, (_, i) =>
+      sized(`old-${i}`, big, i + 1),
+    ),
+    partial: false,
+  });
+  const view = owner.capability.open(agent);
+  const done = view.refresh();
+  pages.at(-1)?.({
+    entries: Array.from({ length: 90 }, (_, i) => sized(`new-${i}`, big)),
+    partial: false,
+  });
+  const entries = view.snapshot().listing?.entries ?? [];
+  const bytes = entries.reduce((sum, entry) => sum + entry.body.length, 0);
+  expect(bytes).toBeLessThanOrEqual(8 * 1024 * 1024);
+  // Every fresh entry stays; the oldest cached ones gave way.
+  expect(entries.filter((e) => e.slug.startsWith("mem/new-"))).toHaveLength(90);
+  expect(entries.some((e) => e.slug === "mem/old-0")).toBe(false);
+  expect(entries.some((e) => e.slug === "mem/old-89")).toBe(true);
+  answer({ entries: [], partial: false });
+  await done;
+  view.dispose();
+});
+
+it("evicts cached-only entries so cached and fresh pages stay within the entry budget", async () => {
+  const { read, answer, pages } = pending();
+  const owner = createAgentMemories(read, viewer, () => true);
+  await readOnce(owner, answer, {
+    entries: Array.from({ length: 4000 }, (_, i) => sized(`old-${i}`, 1)),
+    partial: false,
+  });
+  const view = owner.capability.open(agent);
+  const done = view.refresh();
+  pages.at(-1)?.({
+    entries: Array.from({ length: 200 }, (_, i) => sized(`new-${i}`, 1)),
+    partial: false,
+  });
+  const entries = view.snapshot().listing?.entries ?? [];
+  expect(entries).toHaveLength(4096);
+  expect(entries.filter((e) => e.slug.startsWith("mem/new-"))).toHaveLength(
+    200,
+  );
+  answer({ entries: [], partial: false });
+  await done;
+  view.dispose();
+});

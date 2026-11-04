@@ -381,6 +381,43 @@ it("reports a failed read and reads again on refresh", async () => {
   expect(await screen.findByText("Back.")).toBeInTheDocument();
 });
 
+it("shows pages streamed by a Retry of a partial listing before it finishes", async () => {
+  const user = userEvent.setup();
+  let page: ((page: MemoryListing) => void) | undefined;
+  let finish: (listing: MemoryListing) => void = () => {};
+  let calls = 0;
+  setup((_agent, _signal, _slug, onPage) => {
+    if (++calls === 1)
+      return Promise.resolve({
+        entries: [entry("mem/first", "One.")],
+        partial: true,
+      });
+    page = onPage;
+    return new Promise((resolve) => {
+      finish = resolve;
+    });
+  });
+  await screen.findByText("Some memories couldn't be shown.");
+  await user.click(
+    screen.getByRole("button", { name: "Retry loading memories" }),
+  );
+  await vi.waitFor(() => expect(page).toBeDefined());
+  act(() => page?.({ entries: [entry("mem/second", "Two.")], partial: false }));
+  expect(
+    await screen.findByRole("button", { name: /second/ }),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /first/ })).toBeInTheDocument();
+  await act(async () =>
+    finish({
+      entries: [entry("mem/first", "One."), entry("mem/second", "Two.")],
+      partial: false,
+    }),
+  );
+  await vi.waitFor(() =>
+    expect(screen.queryByText("Some memories couldn't be shown.")).toBeNull(),
+  );
+});
+
 it("shows nothing to read without a session", () => {
   render(
     <MemoryPanel agents={scopeAgents} agent={agent} memories={undefined} />,
@@ -457,8 +494,14 @@ it("retries a partial listing while retaining its memories until recovery", asyn
   await openCore();
   const retry = screen.getByRole("button", { name: "Retry loading memories" });
   await user.click(retry);
-  expect(retry).toHaveAttribute("aria-disabled", "true");
-  await user.click(retry);
+  // The retry shows what it holds and says more are loading, in place of the
+  // Retry it replaces.
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Loading more memories…",
+  );
+  expect(
+    screen.queryByRole("button", { name: "Retry loading memories" }),
+  ).toBeNull();
   expect(screen.getByText("Retained.")).toBeInTheDocument();
   expect(document.querySelector("[data-memory-list]")).toHaveAttribute(
     "data-refreshing",
