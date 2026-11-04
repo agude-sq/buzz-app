@@ -8,7 +8,7 @@ import {
 import type { EventData } from "../../features/relay/events";
 import {
   BASE_PROMPT,
-  MENTION_PROMPT,
+  mentionSection,
 } from "../../features/agent-harness/base-prompt";
 import { coreMemorySection } from "../../features/agent-harness/core-memory";
 import {
@@ -18,6 +18,8 @@ import {
 import { eventBody, quoted } from "../../features/agent-harness/turn-records";
 import channelModel from "./session_model_channel.md?raw";
 import threadModel from "./session_model_thread.md?raw";
+import channelHandoff from "./session_handoff_channel.md?raw";
+import threadHandoff from "./session_handoff_thread.md?raw";
 
 export type Scope = "thread" | "channel";
 /** Messages of thread context shown with a turn, newest kept. */
@@ -185,7 +187,12 @@ export function turnPrompt(input: TurnInput) {
   parts.push(
     ...(input.wake
       ? [wakeSection(input.wake)]
-      : [MENTION_PROMPT, section(EVENT, eventBody(event, event.content))]),
+      : [
+          mentionSection(
+            input.scope === "thread" ? threadHandoff : channelHandoff,
+          ),
+          section(EVENT, eventBody(event, event.content)),
+        ]),
   );
   return parts.join("\n\n");
 }
