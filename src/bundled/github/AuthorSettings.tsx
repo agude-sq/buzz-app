@@ -111,8 +111,8 @@ export function AuthorSettings({
 }
 /** Who author:@me is: the account the person's `gh` is signed in to. */
 function Account({ gh }: { gh: GitHubCli | undefined }) {
-  /** The login, or null when `gh` could not say. */
-  const [login, setLogin] = useState<string | null>();
+  /** The login, or why `gh` could not say. */
+  const [answer, setAnswer] = useState<{ login: string } | Error>();
   useEffect(() => {
     if (!gh) return;
     const stop = new AbortController();
@@ -121,9 +121,10 @@ function Account({ gh }: { gh: GitHubCli | undefined }) {
       {},
       stop.signal,
     ).then(
-      ({ viewer }) => setLogin(viewer.login),
-      () => {
-        if (!stop.signal.aborted) setLogin(null);
+      ({ viewer }) => setAnswer(viewer),
+      (reason) => {
+        if (!stop.signal.aborted)
+          setAnswer(reason instanceof Error ? reason : Error(String(reason)));
       },
     );
     return () => stop.abort();
@@ -132,11 +133,11 @@ function Account({ gh }: { gh: GitHubCli | undefined }) {
     <p className="m-0 text-body-sm text-subtle">
       {!gh
         ? "Your GitHub account is the one gh is signed in to in the desktop app."
-        : login === undefined
+        : !answer
           ? "Checking which GitHub account gh is signed in to…"
-          : login
-            ? `Signed in to GitHub as ${login} through gh.`
-            : "gh couldn’t read your GitHub account. Run gh auth login, then reopen this page."}
+          : answer instanceof Error
+            ? `gh couldn’t read your GitHub account: ${answer.message}`
+            : `Signed in to GitHub as ${answer.login} through gh.`}
     </p>
   );
 }

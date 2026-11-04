@@ -5,7 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it } from "vitest";
 import { AuthorSettings } from "./AuthorSettings";
 import { DEFAULT_RULES, loadPolicy, POLICY_KEY } from "./authors";
-import { GhUnavailable, type GitHubCli } from "./gh";
+import { GhUnavailable, GitHubError, type GitHubCli } from "./gh";
 
 afterEach(() => {
   cleanup();
@@ -98,14 +98,22 @@ it("names the account gh is signed in to, which author:@me means", async () => {
   expect(queries).toEqual(["query{viewer{login}}"]);
 });
 
-it("says when gh cannot name the account", async () => {
-  const gh = (async () => {
-    throw new GhUnavailable("gh: not logged in");
-  }) as GitHubCli;
-  render(<AuthorSettings active={() => true} gh={gh} />);
-  expect(
-    await screen.findByText(
-      "gh couldn’t read your GitHub account. Run gh auth login, then reopen this page.",
-    ),
-  ).toBeInTheDocument();
+it("says why gh cannot name the account", async () => {
+  for (const [error, text] of [
+    [
+      new GhUnavailable("Processes require an installed desktop plugin"),
+      "gh couldn’t read your GitHub account: Processes require an installed desktop plugin",
+    ],
+    [
+      new GitHubError("Bad credentials"),
+      "gh couldn’t read your GitHub account: Bad credentials",
+    ],
+  ] as const) {
+    const gh = (async () => {
+      throw error;
+    }) as GitHubCli;
+    render(<AuthorSettings active={() => true} gh={gh} />);
+    expect(await screen.findByText(text)).toBeInTheDocument();
+    cleanup();
+  }
 });
