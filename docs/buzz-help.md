@@ -349,8 +349,9 @@ With the pinned-viewer development server, Settings → Plugins → Builderlab m
 
 ### Saved External apps approval
 
-External apps can request approval that lasts for 30 days. Buzz shows this
-lifetime before you authorize access. The app can restore the same access after
-Buzz or the app restarts. Keep Buzz open in the approved community. Keys stay
-in Buzz. Use **Settings > External apps > Revoke access** to remove approval,
+External apps can request saved approval. The app can renew valid approval
+for another 30 days. Approval expires after 30 days without renewal. Buzz shows
+this policy before you authorize access. Expired or revoked approval requires
+new owner consent. The app can restore the same access after Buzz or the app
+restarts. Keep Buzz open in the approved community. Keys stay in Buzz. Use **Settings > External apps > Revoke access** to remove approval,
 even when no session is connected. Added access requires new approval.

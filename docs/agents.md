@@ -133,7 +133,10 @@ tools are unavailable. Connection credentials must stay out of logs and messages
 ### Durable external approval
 
 Version 2 uses the same request fields and callback as version 1. Initial consent
-saves approval for 30 days. The native credential store holds its random ID and
+saves approval for 30 days. An authenticated reconnect renews valid approval
+for another 30 days after the current connection checks pass. Approval expires
+after 30 days without renewal. Expired or revoked approval requires new owner
+consent. The native credential store holds its random ID and
 256-bit reconnect secret. Approval binds the client display name, signed-in
 owner, agent membership, canonical community origin, and exact scopes. The
 webview receives only the public approval. Agent signing keys stay in Buzz.
@@ -167,7 +170,11 @@ with this HMAC input:
 
 The client checks this proof before exchange. The endpoint can change after a
 restart. The exchange returns the same approval and secret, the accepted
-counter, and a fresh bearer. The client initializes that one-session bearer.
+counter, a renewed `expires_at`, and a fresh bearer. Reservation of a counter
+does not renew approval. The client accepts only an unchanged ID, secret,
+approval, and accepted counter. The returned expiry must not decrease or exceed
+30 days from the current time. The client saves the renewed record before it
+initializes that one-session bearer.
 Neither side resumes or repeats a tool request.
 
 External apps restores the saved approval in Settings. **Revoke access** first

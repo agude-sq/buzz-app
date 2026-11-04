@@ -38,22 +38,25 @@ pub(crate) struct Grant {
 
 impl Grant {
     pub fn active(&self) -> Result<(), String> {
-        self.check_current(load(&self.account)?.as_ref())
+        self.check_current(load(&self.account)?.as_ref(), now()?)
     }
-    fn check_current(&self, current: Option<&Grant>) -> Result<(), String> {
+    fn check_current(&self, current: Option<&Grant>, now: u64) -> Result<(), String> {
         let current = current.ok_or("Buzz approval is revoked")?;
         if current.id != self.id
             || current.secret != self.secret
-            || current.expires_at != self.expires_at
+            || current.expires_at < self.expires_at
             || current.approval != self.approval
-            || current.expires_at <= now()?
+            || current.expires_at <= now
         {
             return Err("Buzz approval is revoked or expired".into());
         }
         Ok(())
     }
     fn reserve(&mut self, request: &Authorization) -> Result<(), String> {
-        self.check(request)?;
+        self.reserve_at(request, now()?)
+    }
+    fn reserve_at(&mut self, request: &Authorization, now: u64) -> Result<(), String> {
+        self.check(request, now)?;
         let counter = request
             .resume
             .as_ref()
@@ -64,6 +67,22 @@ impl Grant {
         }
         self.counter = counter;
         self.state = request.state.clone();
+        Ok(())
+    }
+    fn renew(&mut self, request: &Authorization, now: u64) -> Result<(), String> {
+        self.check(request, now)?;
+        let resume = request.resume.as_ref().ok_or("Missing pairing proof")?;
+        if request.approval.as_ref() != Some(&self.approval)
+            || self.counter != resume.counter
+            || self.state != request.state
+        {
+            return Err("Buzz approval does not match this connection".into());
+        }
+        let expires_at = now
+            .checked_add(LIFETIME)
+            .filter(|expires_at| *expires_at >= self.expires_at)
+            .ok_or("Cannot renew approval with this clock")?;
+        self.expires_at = expires_at;
         Ok(())
     }
     pub fn public(&self) -> serde_json::Value {
@@ -80,12 +99,12 @@ impl Grant {
         mac.update(value.to_string().as_bytes());
         Ok(mac)
     }
-    fn check(&self, request: &Authorization) -> Result<(), String> {
+    fn check(&self, request: &Authorization, now: u64) -> Result<(), String> {
         let resume = request.resume.as_ref().ok_or("Missing pairing proof")?;
         let proof = URL_SAFE_NO_PAD
             .decode(&resume.proof)
             .map_err(|_| "Invalid pairing proof")?;
-        if self.id != resume.id || self.expires_at <= now()? {
+        if self.id != resume.id || self.expires_at <= now {
             return Err("Buzz approval is revoked or expired".into());
         }
         self.mac(serde_json::json!([
@@ -220,15 +239,10 @@ pub(super) fn authorize<R: tauri::Runtime>(
     match (&request.approval, &request.resume) {
         (None, None) => Ok(None),
         (Some(approval), resume) => {
-            if let Some(resume) = resume {
-                let grant = load(&account)?.ok_or("Buzz approval is revoked")?;
-                grant.check(request)?;
-                if grant.approval != *approval
-                    || grant.counter != resume.counter
-                    || grant.state != request.state
-                {
-                    return Err("Buzz approval does not match this connection".into());
-                }
+            if resume.is_some() {
+                let mut grant = load(&account)?.ok_or("Buzz approval is revoked")?;
+                grant.renew(request, now()?)?;
+                save(&account, &grant)?;
                 return Ok(Some(grant));
             }
             let pubkey = |value: &str| {
@@ -403,6 +417,101 @@ mod tests {
         }
     }
 
+    fn renewal_request(saved: &Grant, counter: u64) -> Authorization {
+        let mut request = request();
+        request.approval = Some(saved.approval.clone());
+        let proof = saved
+            .mac(serde_json::json!([
+                "buzz-resume-request-v1",
+                saved.id,
+                counter,
+                request.callback,
+                request.state,
+                request.code_challenge
+            ]))
+            .unwrap()
+            .finalize()
+            .into_bytes();
+        request.resume.as_mut().unwrap().counter = counter;
+        request.resume.as_mut().unwrap().proof = URL_SAFE_NO_PAD.encode(proof);
+        request
+    }
+
+    #[test]
+    fn valid_reconnects_renew_the_same_approval_for_thirty_days() {
+        let mut saved = grant();
+        saved.expires_at = 3_592_000;
+        let initial = saved.clone();
+        for (counter, now, expected_expiry) in [
+            (1, 2_728_000, 5_320_000),
+            (2, 4_456_000, 7_048_000),
+            (3, 6_184_000, 8_776_000),
+        ] {
+            let request = renewal_request(&saved, counter);
+            let previous = saved.clone();
+            saved.reserve_at(&request, now).unwrap();
+            assert_eq!(saved.expires_at, previous.expires_at);
+            saved.renew(&request, now).unwrap();
+            assert_eq!(saved.expires_at, expected_expiry);
+            assert_eq!(saved.counter, counter);
+            assert_eq!(saved.id, initial.id);
+            assert_eq!(saved.secret, initial.secret);
+            assert!(saved.approval == initial.approval);
+            assert!(previous.check_current(Some(&saved), now).is_ok());
+        }
+        assert!(initial.check_current(Some(&saved), 6_184_000).is_ok());
+        assert!(saved.check_current(Some(&initial), 2_728_000).is_err());
+        assert!(initial.check_current(None, 6_184_000).is_err());
+    }
+
+    #[test]
+    fn renewal_refuses_expired_approval_and_invalid_connection_context() {
+        let mut saved = grant();
+        saved.expires_at = 3_592_000;
+        let request = renewal_request(&saved, 1);
+        saved.reserve_at(&request, 2_728_000).unwrap();
+        for field in [
+            "expired",
+            "expiry",
+            "proof",
+            "viewer",
+            "agent",
+            "community",
+            "scopes",
+            "counter",
+            "state",
+            "clock",
+        ] {
+            let mut candidate = saved.clone();
+            let mut request = request.clone();
+            let mut now = 2_728_000;
+            match field {
+                "expired" => now = 3_592_001,
+                "expiry" => now = 3_592_000,
+                "proof" => request.resume.as_mut().unwrap().proof = "A".repeat(43),
+                "viewer" => request.approval.as_mut().unwrap().viewer = "c".repeat(64),
+                "agent" => request.approval.as_mut().unwrap().agent = "d".repeat(64),
+                "community" => {
+                    request.approval.as_mut().unwrap().community = "https://other.test".into()
+                }
+                "scopes" => request
+                    .approval
+                    .as_mut()
+                    .unwrap()
+                    .scopes
+                    .push("post".into()),
+                "counter" => candidate.counter = 2,
+                "state" => candidate.state = "D".repeat(43),
+                _ => now = 999_999,
+            }
+            assert!(candidate.renew(&request, now).is_err(), "{field}");
+            assert_eq!(candidate.expires_at, saved.expires_at, "{field}");
+        }
+        assert!(saved
+            .reserve_at(&renewal_request(&saved, 2), 3_592_000)
+            .is_err());
+    }
+
     #[test]
     fn storage_lock_excludes_other_handles_and_releases_on_close() {
         let directory = tempfile::tempdir().unwrap();
@@ -478,8 +587,8 @@ mod tests {
     #[test]
     fn revoked_expired_and_changed_approval_cannot_dispatch() {
         let saved = grant();
-        assert!(saved.check_current(Some(&saved)).is_ok());
-        assert!(saved.check_current(None).is_err());
+        assert!(saved.check_current(Some(&saved), 1_000).is_ok());
+        assert!(saved.check_current(None, 1_000).is_err());
         for field in [
             "id",
             "secret",
@@ -499,7 +608,10 @@ mod tests {
                 "scopes" => current.approval.scopes.push("post".into()),
                 _ => current.expires_at = 0,
             }
-            assert!(saved.check_current(Some(&current)).is_err(), "{field}");
+            assert!(
+                saved.check_current(Some(&current), 1_000).is_err(),
+                "{field}"
+            );
         }
     }
 }

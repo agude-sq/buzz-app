@@ -20,8 +20,9 @@ export function ExternalConnectionSettings({
       <SettingsGroup layout="form">
         <p className="m-0 text-body-sm text-secondary">
           Start setup in the external app. Buzz asks you to select an agent and
-          authorize access. Saved approval lasts for 30 days. Apps can restore
-          valid access after a restart. Keys stay in Buzz. Keep Buzz open.
+          authorize access. Apps can renew valid approval for another 30 days.
+          Approval expires after 30 days without renewal. Apps can restore valid
+          access after a restart. Keys stay in Buzz. Keep Buzz open.
         </p>
         {state.grant ? (
           <PreferenceRow
