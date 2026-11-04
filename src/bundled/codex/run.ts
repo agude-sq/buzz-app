@@ -19,6 +19,7 @@ export const codexRun = (
 ): Pick<
   AgentType<Config>,
   | "models"
+  | "retire"
   | "sessionControls"
   | "run"
   | "runOnce"
@@ -27,6 +28,7 @@ export const codexRun = (
   | "resumes"
 > => ({
   models: (agent) => runtime.preview(agent),
+  retire: (agent) => runtime.retire(agent),
   sessionControls: {
     scope: (agent) => config(agent.config).scope,
     state: (agent, place) => runtime.sessionState(agent, place),

@@ -267,6 +267,10 @@ export class CodexRuntime {
     }
   >();
   private entries = new Map<AgentKey, Entry>();
+  private actions = new Map<
+    AgentKey,
+    Set<{ abort: AbortController; done: Promise<void> }>
+  >();
   private server: Server | undefined;
   private stopping = new Map<AgentKey, Promise<void>>();
   private views = new Map<AgentKey, readonly SessionView[]>();
@@ -471,13 +475,30 @@ export class CodexRuntime {
       ? "active"
       : "idle";
   }
-  async session(
+  session(agent: Agent, place: SessionPlace, action: SessionControlAction) {
+    const abort = new AbortController();
+    const pending = {
+      abort,
+      done: this.changeSession(agent, place, action, abort.signal),
+    };
+    const actions = this.actions.get(agent.key) ?? new Set();
+    this.actions.set(agent.key, actions);
+    actions.add(pending);
+    return pending.done.finally(() => {
+      actions.delete(pending);
+      if (!actions.size) this.actions.delete(agent.key);
+    });
+  }
+  private async changeSession(
     agent: Agent,
     place: SessionPlace,
     action: SessionControlAction,
+    lifetime: AbortSignal,
   ): Promise<void> {
     const reads = this.reads(agent.key);
-    if (reads && (await this.inspect?.(agent.key))) {
+    const remote = await this.inspect?.(agent.key);
+    lifetime.throwIfAborted();
+    if (reads && remote) {
       const conversation = this.controlKey(agent, place);
       const key = this.executionKey(agent.key, reads.scope, conversation);
       if (action === "interrupt") {
@@ -534,6 +555,7 @@ export class CodexRuntime {
         agent.key,
         reads.scope,
         conversation,
+        lifetime,
       );
       return runtime.session(agent, place, action);
     }
@@ -550,7 +572,7 @@ export class CodexRuntime {
     if (this.sessionState(agent, place) !== "idle")
       throw new Error("Wait for the active turn to finish first.");
     return this.controls.run(control, action, async (cancel) => {
-      const signal = AbortSignal.any([entry.abort.signal, cancel]);
+      const signal = AbortSignal.any([entry.abort.signal, cancel, lifetime]);
       signal.throwIfAborted();
       const saved = entry.saved[key];
       if (action === "new") {
@@ -704,38 +726,65 @@ export class CodexRuntime {
     );
     for (const listener of this.listeners) listener();
   }
+  retire(agent: AgentKey): Promise<void> {
+    const prior = this.stopping.get(agent);
+    const entry = this.entries.get(agent);
+    const actions = [...(this.actions.get(agent) ?? [])];
+    for (const action of actions) action.abort.abort();
+    entry?.abort.abort();
+    this.entries.delete(agent);
+    this.views.delete(agent);
+    this.previews.delete(agent);
+    this.inventories.delete(agent);
+    this.inventoryReads.delete(agent);
+    this.inventoryVersions.delete(agent);
+    const pending = [...this.opening.values()].filter(
+      (opening) => opening.agent === agent,
+    );
+    for (const opening of pending) opening.abort.abort();
+    const remotes = [...this.remote].filter(
+      ([, remote]) => remote.agent === agent,
+    );
+    for (const [key] of remotes) this.remote.delete(key);
+    const stopped = Promise.all([
+      prior,
+      ...actions.map((action) => action.done.catch(() => undefined)),
+      ...(entry && this.server ? [this.stop(this.server, agent, entry)] : []),
+      ...pending.map((opening) => opening.ready.catch(() => undefined)),
+      ...remotes.map(async ([, remote]) => {
+        try {
+          await remote.runtime.retire(agent);
+        } finally {
+          remote.runtime.dispose();
+          await remote.execution.dispose();
+        }
+      }),
+    ]).then(() => undefined);
+    this.stopping.set(agent, stopped);
+    const clear = () => {
+      if (this.stopping.get(agent) === stopped) this.stopping.delete(agent);
+    };
+    void stopped.then(clear, clear);
+    for (const listener of this.listeners) listener();
+    return stopped;
+  }
   sync(agents: readonly Agent[]) {
-    for (const opening of this.opening.values())
-      if (!agents.some((agent) => agent.key === opening.agent))
-        opening.abort.abort();
-    for (const [key, remote] of this.remote) {
-      if (!agents.some((agent) => agent.key === remote.agent)) {
-        this.remote.delete(key);
-        remote.runtime.dispose();
-        void remote.execution.dispose();
-      }
-    }
     const present = new Set(agents.map((agent) => agent.key));
-    for (const key of new Set([
+    const held = new Set([
+      ...this.entries.keys(),
+      ...this.actions.keys(),
+      ...this.views.keys(),
+      ...this.previews.keys(),
       ...this.inventories.keys(),
       ...this.inventoryReads.keys(),
-    ]))
-      if (!present.has(key)) {
-        this.inventories.delete(key);
-        this.inventoryReads.delete(key);
-        this.inventoryVersions.delete(key);
-      }
-    for (const key of this.previews.keys())
-      if (!present.has(key)) {
-        this.previews.delete(key);
-      }
-    for (const [key, entry] of this.entries)
-      if (!present.has(key)) {
-        entry.abort.abort();
-        this.entries.delete(key);
-        this.views.delete(key);
-        if (this.server) this.stop(this.server, key, entry);
-      }
+      ...[...this.opening.values()].map((opening) => opening.agent),
+      ...[...this.remote.values()].map((remote) => remote.agent),
+    ]);
+    for (const agent of held)
+      if (!present.has(agent))
+        void this.retire(agent).catch((error) =>
+          console.error("Codex could not retire an agent", agent, error),
+        );
     if (!present.size) this.close();
     for (const listener of this.listeners) listener();
   }
@@ -765,13 +814,12 @@ export class CodexRuntime {
             );
         }
     })();
-    this.stopping.set(agent, stopped);
-    void stopped.finally(() => {
-      if (this.stopping.get(agent) === stopped) this.stopping.delete(agent);
-    });
+    return stopped;
   }
   dispose() {
     this.disposed = true;
+    for (const actions of this.actions.values())
+      for (const action of actions) action.abort.abort();
     for (const opening of this.opening.values()) opening.abort.abort();
     for (const remote of this.remote.values()) {
       remote.runtime.dispose();

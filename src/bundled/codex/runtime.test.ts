@@ -23,6 +23,7 @@ import type {
 } from "../../features/host/service";
 import { BUZZ_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import { CodexRuntime, codexStep, programs } from "./runtime";
+import { codexRun } from "./run";
 import { config } from "./config";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import { wake } from "../../features/agent-harness/wakes";
@@ -808,7 +809,15 @@ it("stops a removed agent's turn without ending the server the others share", as
   await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
   const removed = (f.starts()[1]?.params as { threadId: string } | undefined)
     ?.threadId;
+  const cleanup = deferred<void>();
+  f.held.set("thread/unsubscribe", cleanup.promise);
   f.runtime.sync([{ key: pubkey, pubkey } as Agent]);
+  const driver = codexRun(f.runtime);
+  if (!driver.retire) throw new Error("Codex cannot retire its agents");
+  let retired = false;
+  const retirement = driver.retire(b.agent.key).then(() => {
+    retired = true;
+  });
   await vi.waitFor(() =>
     expect(
       f.sent.some(
@@ -818,6 +827,12 @@ it("stops a removed agent's turn without ending the server the others share", as
       ),
     ).toBe(true),
   );
+  try {
+    expect(retired).toBe(false);
+  } finally {
+    cleanup.resolve();
+  }
+  await retirement;
   for (const method of ["turn/interrupt", "thread/backgroundTerminals/clean"])
     expect(f.sent.find((wire) => wire.method === method)?.params).toMatchObject(
       { threadId: removed },
@@ -4297,6 +4312,54 @@ describe("session actions", () => {
     await f.complete();
   });
 
+  it("waits for a compact action to release its thread when its agent retires", async () => {
+    const f = fixture();
+    const delivery = f.delivery("first");
+    const agent = {
+      ...delivery.agent,
+      config: delivery.config,
+    } as unknown as Agent;
+    const place = { channelId: "channel", root };
+    await f.runtime.run(delivery);
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await f.complete();
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+    );
+    const compacted = f.runtime
+      .session(agent, place, "compact")
+      .catch((error) => error);
+    await vi.waitFor(() =>
+      expect(methods(f)).toContain("thread/compact/start"),
+    );
+    const released = () =>
+      f.sent.filter((wire) => wire.method === "thread/unsubscribe");
+    const before = released().length;
+    const cleanup = deferred<void>();
+    f.held.set("thread/unsubscribe", cleanup.promise);
+    let retired = false;
+    const retirement = f.runtime.retire(pubkey).then(() => {
+      retired = true;
+    });
+    f.emit({
+      method: "turn/started",
+      params: { threadId: "thread-1", turn: { id: "compact" } },
+    });
+    try {
+      await vi.waitFor(() => expect(released()).toHaveLength(before + 1));
+      expect(methods(f)).toContain("turn/interrupt");
+      expect(retired).toBe(false);
+    } finally {
+      cleanup.resolve();
+    }
+    expect(await compacted).toBeInstanceOf(Error);
+    await retirement;
+    expect(f.runtime.sessions(pubkey)).toEqual([]);
+    await f.runtime.run(f.delivery("after retirement"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    await f.complete();
+  });
+
   it("resets durably without a message, and preserves the binding if the write fails", async () => {
     const f = fixture();
     const delivery = f.delivery("first");
@@ -4700,6 +4763,8 @@ it("rejects an execution open that completes after the agent retires", async () 
     },
   );
   const lifetime = new AbortController();
+  const cleanup = deferred<void>();
+  const cleaning = deferred<void>();
   const target: AgentExecution = {
     workspace: "/guest/project",
     signal: lifetime.signal,
@@ -4708,13 +4773,26 @@ it("rejects an execution open that completes after the agent retires", async () 
     readFile: async () => new Uint8Array(),
     dispose: vi.fn(async () => {
       lifetime.abort();
+      cleaning.resolve();
+      await cleanup.promise;
     }),
   };
   const result = f.runtime.run(f.delivery("open"));
+  const rejected = expect(result).rejects.toThrow("Codex runtime is retired");
   await started.promise;
-  f.runtime.sync([]);
+  let retired = false;
+  const retirement = f.runtime.retire(pubkey).then(() => {
+    retired = true;
+  });
   opened.resolve(target);
-  await expect(result).rejects.toThrow("Codex runtime is retired");
+  await cleaning.promise;
+  try {
+    expect(retired).toBe(false);
+  } finally {
+    cleanup.resolve();
+  }
+  await retirement;
+  await rejected;
   expect(target.dispose).toHaveBeenCalledOnce();
   expect(f.spawn).not.toHaveBeenCalled();
 });
@@ -4819,6 +4897,53 @@ function guestTarget(guest: ReturnType<typeof fixture>): AgentExecution {
     },
   };
 }
+
+it("waits for remote turn and target cleanup when an agent retires", async () => {
+  const guest = fixture();
+  const execution = guestTarget(guest);
+  const cleaned = deferred<void>();
+  const cleaning = deferred<void>();
+  const target = {
+    ...execution,
+    dispose: vi.fn(async () => {
+      cleaning.resolve();
+      await cleaned.promise;
+      await execution.dispose();
+    }),
+  };
+  const f = fixture(
+    [],
+    undefined,
+    false,
+    {},
+    undefined,
+    undefined,
+    async () => target,
+  );
+  await f.runtime.run(f.delivery("work"));
+  await vi.waitFor(() => expect(guest.starts()).toHaveLength(1));
+  let retired = false;
+  const retirement = f.runtime.retire(pubkey).then(() => {
+    retired = true;
+  });
+  await cleaning.promise;
+  try {
+    expect(retired).toBe(false);
+    expect(guest.sent.some((wire) => wire.method === "turn/interrupt")).toBe(
+      true,
+    );
+    expect(
+      guest.sent.some((wire) => wire.method === "thread/unsubscribe"),
+    ).toBe(true);
+    expect(guest.process.end).toHaveBeenCalled();
+    expect(f.runtime.sessions(pubkey)).toEqual([]);
+    expect(f.publish).not.toHaveBeenCalled();
+  } finally {
+    cleaned.resolve();
+  }
+  await retirement;
+  expect(target.signal.aborted).toBe(true);
+});
 
 it("gives each conversation a durable target key and rotates only its New session", async () => {
   vi.useFakeTimers();
