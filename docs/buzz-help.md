@@ -177,8 +177,7 @@ that agent in Buzz; they do not notify the external app through this connection.
   name in a conversation shows its profile, where **Settings → Instructions**
   offers the same edit. Model, workspace, and other runtime options depend on
   its type. Do not assume someone can edit another person's agent.
-- A desktop plugin can select remote execution for an agent type that supports
-  it. The plugin manages the target, workspace, credentials, and expiry. A saved
+- A desktop plugin can run native Codex on another computer. The plugin manages the target, workspace, credentials, and expiry. A saved
   remote choice stays remote after an app restart. If the target cannot be
   restored, Buzz shows an error and requires a new session.
 - An agent's name and picture identify it. Instructions shape its response
