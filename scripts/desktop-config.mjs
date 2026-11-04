@@ -59,6 +59,10 @@ const ONBOARDING_TEST_IDENTIFIER = "xyz.block.buzz.desktop.onboarding-test";
 const PRODUCTION_BUILDERLAB_URL = "https://app.builderlab.xyz";
 // Inputs that would point the build away from production or fake first run.
 // Empty counts as unset, except BUZZ_BUILDERLAB_URL, where empty disables it.
+// With no FI descriptor the build compiles only the built-in bb-public server
+// (`federated_identity/built-in-server.json`), so onboarding, the Builderlab
+// plugin and communities share one saved sign-in. An added descriptor would
+// put another server first, so it is refused like any other override.
 export const NON_PRODUCTION = [
   "BUZZ_DEV_VIEWER",
   "BUZZ_DEV_CREDENTIAL_HELPER",

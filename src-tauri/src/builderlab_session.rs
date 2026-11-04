@@ -6,9 +6,9 @@ use zeroize::Zeroizing;
 
 #[cfg_attr(test, allow(dead_code))]
 const SERVICE: &str = if cfg!(debug_assertions) {
-    "xyz.block.buzz.desktop.builderlab-session.debug"
+    "xyz.block.buzz.desktop.onboarding-test.builderlab-session.debug"
 } else {
-    "xyz.block.buzz.desktop.builderlab-session"
+    "xyz.block.buzz.desktop.onboarding-test.builderlab-session"
 };
 const LIMIT: usize = 4096;
 
