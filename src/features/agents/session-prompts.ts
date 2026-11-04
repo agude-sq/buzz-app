@@ -107,6 +107,8 @@ export function sessionPrompts(
   const get = (session: string) => all().find(([id]) => id === session)?.[1];
   return {
     get,
+    /** The ids of the sessions kept, oldest first. */
+    ids: () => all().map(([id]) => id),
     /** Keeps what a new session was sent, unless one is kept for it already:
      * the first save wins. Only a runtime's new-session path calls this, so a
      * resumed or dropped session is never filled in. A failed save is

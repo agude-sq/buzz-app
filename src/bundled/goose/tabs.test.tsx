@@ -677,8 +677,9 @@ it("says when the bundled goose-acp is missing, and tries again", async () => {
 const ROOT = "1".repeat(64);
 const GANDER = "c".repeat(64);
 
-/** goose's history with one session Gander ran in #general's thread. */
-function gooseHistory() {
+/** goose's history with sessions Gander ran in #general's thread, each
+ * sending `Hi from goose` (s1) or `Hi from <id>`. */
+function gooseHistory(ids: readonly string[] = ["s1"]) {
   const context = [
     "<context>",
     "Scope: thread",
@@ -694,65 +695,84 @@ function gooseHistory() {
   ].join("\n");
   return fakeSpawn({
     home: "/home/test",
-    history: [
-      {
-        sessionId: "s1",
-        title: "Gander · #general · 11111111",
-        cwd: "/home/test/.buzz",
-        updatedAt: "2027-01-15T08:00:00Z",
-        conversation: [
-          {
-            role: "user",
-            created: 1_800_000_000,
-            content: [{ type: "text", text: context }],
-            metadata: { userVisible: true },
-          },
-          {
-            role: "assistant",
-            created: 1_800_000_001,
-            content: [
-              {
-                type: "toolRequest",
-                id: "t1",
-                toolCall: {
-                  status: "success",
-                  value: {
-                    name: "buzz__send",
-                    arguments: { text: "Hi from goose", final: true },
+    history: ids.map((sessionId) => ({
+      sessionId,
+      title: "Gander · #general · 11111111",
+      cwd: "/home/test/.buzz",
+      updatedAt: "2027-01-15T08:00:00Z",
+      conversation: [
+        {
+          role: "user",
+          created: 1_800_000_000,
+          content: [{ type: "text", text: context }],
+          metadata: { userVisible: true },
+        },
+        {
+          role: "assistant",
+          created: 1_800_000_001,
+          content: [
+            {
+              type: "toolRequest",
+              id: "t1",
+              toolCall: {
+                status: "success",
+                value: {
+                  name: "buzz__send",
+                  arguments: {
+                    text: `Hi from ${sessionId === "s1" ? "goose" : sessionId}`,
+                    final: true,
                   },
                 },
               },
-            ],
-          },
-        ],
-      },
-    ],
+            },
+          ],
+        },
+      ],
+    })),
   });
 }
 
-/** Gander's Activity tab, with `saved` as the conversations Buzz saved. */
+/** What the fake runtime holds for Gander; `change` shows its update. */
+type World = {
+  saved: ReturnType<GooseRuntime["conversations"]>;
+  live?: ReturnType<GooseRuntime["sessions"]>;
+  /** Every session's id with a kept prompt, oldest first. */
+  ids?: string[];
+  names?: Record<string, string>;
+};
+
+/** Gander's Activity tab over `world`. */
 function activity(
   fake: ReturnType<typeof fakeSpawn>,
-  saved: ReturnType<GooseRuntime["conversations"]>,
+  world: World,
   history = new GooseHistory(fake),
   props: Partial<
     Parameters<ReturnType<typeof createTabs>["ActivityTab"]>[0]
   > = {},
 ) {
+  const listeners = new Set<() => void>();
   // The runtime keeps one snapshot until its sessions change.
-  const none: never[] = [];
+  let live = world.live ?? [];
   const runtime = {
-    subscribe: () => () => {},
-    sessions: () => none,
-    conversations: () => saved,
-    prompts: () => ({ shown: (turns: unknown) => turns }),
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    sessions: () => live,
+    conversations: () => world.saved,
+    channelLabel: (_: string, id: string) =>
+      world.names?.[id] ? { name: world.names[id], kind: "stream" } : undefined,
+    prompts: () => ({
+      shown: (turns: unknown) => turns,
+      ids: () => world.ids ?? [],
+    }),
   } as unknown as GooseRuntime;
   const { ActivityTab } = createTabs({
     setup: new GooseSetup(fake),
     runtime,
     history,
   });
-  return render(
+  const rendered = render(
     <ActivityTab
       agent={
         {
@@ -767,6 +787,16 @@ function activity(
       {...props}
     />,
   );
+  return {
+    ...rendered,
+    change(next: Partial<World>) {
+      Object.assign(world, next);
+      live = [...(world.live ?? [])];
+      act(() => {
+        for (const listener of listeners) listener();
+      });
+    },
+  };
 }
 
 const searches = (fake: ReturnType<typeof fakeSpawn>) =>
@@ -776,7 +806,7 @@ const searches = (fake: ReturnType<typeof fakeSpawn>) =>
 
 it("lists the agent's saved conversations and reads one's transcript by id, without searching goose", async () => {
   const fake = gooseHistory();
-  activity(fake, [{ key: `chan/${ROOT}`, at: 1, sessions: ["s1"] }]);
+  activity(fake, { saved: [{ key: `chan/${ROOT}`, at: 1, sessions: ["s1"] }] });
   const user = userEvent.setup();
   await user.click(
     screen.getByRole("button", {
@@ -791,7 +821,7 @@ it("lists the agent's saved conversations and reads one's transcript by id, with
 it("searches goose's history for a conversation with no saved session only when asked", async () => {
   const fake = gooseHistory();
   const done = vi.fn();
-  activity(fake, [], undefined, {
+  activity(fake, { saved: [] }, undefined, {
     conversation: { channelId: "chan", rootId: ROOT },
     initialTranscript: { opening: 1, done },
   });
@@ -817,7 +847,7 @@ it("cancels reading goose's history when Activity is left", async () => {
     });
   const { unmount } = activity(
     fake,
-    [{ key: `chan/${ROOT}`, at: 1, sessions: ["s1"] }],
+    { saved: [{ key: `chan/${ROOT}`, at: 1, sessions: ["s1"] }] },
     history,
   );
   await userEvent.setup().click(
@@ -829,6 +859,86 @@ it("cancels reading goose's history when Activity is left", async () => {
   expect(signal?.aborted).toBe(false);
   unmount();
   expect(signal?.aborted).toBe(true);
+});
+
+it("lists conversations by channel name, with running and standalone sessions, one row each", async () => {
+  const fake = gooseHistory(["s1", "timer"]);
+  const old = (key: string, at: number) => ({ key, at, sessions: [] });
+  const world: World = {
+    saved: [old("a", 3), old("b", 2), old("c", 1)],
+    live: [{ key: "running", busy: true, sessionId: "live", at: 4 }],
+    ids: ["s1", "timer", "live"],
+    names: { a: "general" },
+  };
+  const { change } = activity(fake, world);
+  const user = userEvent.setup();
+  const items = () =>
+    screen.getAllByRole("listitem").map((item) => item.textContent);
+  expect(items()).toHaveLength(6);
+  expect(screen.getByText("general · channel")).toBeInTheDocument();
+  expect(screen.getByText("running · channel")).toBeInTheDocument();
+  // A conversation saved before session ids were: it gets its first one.
+  change({
+    saved: [old("a", 3), { key: "b", at: 5, sessions: ["s1"] }, old("c", 1)],
+  });
+  // Its id leaves the standalone sessions; no row is duplicated.
+  expect(items()).toHaveLength(5);
+  expect(screen.queryByText("Session s1")).toBeNull();
+  // A watch's or timer's session, kept with its starting prompt only.
+  await user.click(
+    screen.getByRole("button", { name: "View transcript: Session timer" }),
+  );
+  expect(await screen.findByText("Hi from timer")).toBeInTheDocument();
+  expect(searches(fake)).toEqual([]);
+});
+
+it("follows the open conversation's newest session on Refresh", async () => {
+  const fake = gooseHistory(["s1", "s2"]);
+  const world: World = {
+    saved: [{ key: `chan/${ROOT}`, at: 1, sessions: ["s1"] }],
+  };
+  const { change } = activity(fake, world);
+  const user = userEvent.setup();
+  await user.click(
+    screen.getByRole("button", {
+      name: "View transcript: chan · thread 11111111",
+    }),
+  );
+  expect(await screen.findByText("Hi from goose")).toBeInTheDocument();
+  change({ saved: [{ key: `chan/${ROOT}`, at: 2, sessions: ["s2", "s1"] }] });
+  expect(await screen.findByText("Hi from s2")).toBeInTheDocument();
+  expect(searches(fake)).toEqual([]);
+});
+
+it("finds a thread's conversation in its channel's saved session", async () => {
+  const fake = gooseHistory();
+  activity(
+    fake,
+    { saved: [{ key: "chan", at: 1, sessions: ["s1"] }] },
+    undefined,
+    {
+      conversation: { channelId: "chan", rootId: ROOT },
+      initialTranscript: { opening: 1, done: vi.fn() },
+    },
+  );
+  expect(await screen.findByText("Hi from goose")).toBeInTheDocument();
+  expect(searches(fake)).toEqual([]);
+});
+
+it("says when goose no longer has a conversation's saved sessions", async () => {
+  const fake = gooseHistory([]);
+  activity(fake, { saved: [{ key: "chan", at: 1, sessions: ["gone"] }] });
+  await userEvent
+    .setup()
+    .click(
+      screen.getByRole("button", { name: "View transcript: chan · channel" }),
+    );
+  expect(
+    await screen.findByText(/goose no longer has the sessions Buzz saved/),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Search older sessions" }),
+  ).toBeInTheDocument();
 });
 
 it("edits Goose device defaults without creating an agent override", async () => {

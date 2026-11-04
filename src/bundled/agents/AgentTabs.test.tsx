@@ -322,6 +322,8 @@ it.each(["here", "hosted"] as const)(
     expect(read).not.toHaveBeenCalled();
     expect(screen.queryByRole("tab", { name: "Attention" })).toBeNull();
     await user.click(screen.getByRole("tab", { name: "Memory" }));
+    // A closed memory's body is not rendered; open core to read it.
+    await user.click(await screen.findByRole("button", { name: "core" }));
     expect(await screen.findByText("Original memory")).toBeInTheDocument();
     expect(
       screen.queryAllByRole("button", { name: "Memory scope: example.com" }),
@@ -341,6 +343,7 @@ it.each(["here", "hosted"] as const)(
     }
     body = "Updated memory";
     await user.click(screen.getByRole("tab", { name: "Memory" }));
+    await user.click(await screen.findByRole("button", { name: "core" }));
     expect(await screen.findByText("Updated memory")).toBeInTheDocument();
     expect(read).toHaveBeenCalledTimes(2);
     expect(screen.queryByText("Original memory")).not.toBeInTheDocument();

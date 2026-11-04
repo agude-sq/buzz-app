@@ -45,6 +45,11 @@ const scopeAgents: AgentScopeReader = {
   ],
 };
 
+/** Opens core, whose body renders only while it is open. */
+async function openCore() {
+  fireEvent.click(await screen.findByRole("button", { name: "core" }));
+}
+
 function setup(
   read: () => Promise<MemoryListing>,
   communities?: CommunityReader,
@@ -92,6 +97,8 @@ it("shows core first, then other memories in Markdown accordions", async () => {
   ).not.toBeInTheDocument();
   const coreTrigger = within(core).getByRole("button", { name: "core" });
   expect(coreTrigger).toHaveAttribute("aria-expanded", "false");
+  // A closed memory's body, core's too, is not rendered until it opens.
+  expect(within(core).queryByText("Keep it short.")).toBeNull();
   await user.click(within(coreTrigger).getByText("core"));
   expect(coreTrigger).toHaveAttribute("aria-expanded", "true");
   await user.keyboard("{Enter}");
@@ -307,6 +314,7 @@ it("reports a failed read and reads again on refresh", async () => {
   );
   fail = false;
   await user.click(screen.getByRole("button", { name: "Refresh" }));
+  await openCore();
   expect(await screen.findByText("Back.")).toBeInTheDocument();
 });
 
@@ -323,10 +331,10 @@ it("clears displayed plaintext when its session invalidates the view", async () 
     entries: [entry("core", "I am Ada.")],
     partial: false,
   }));
-  await screen.findByText("I am Ada.");
-  const trigger = screen.getByRole("button", { name: "core" });
+  const trigger = await screen.findByRole("button", { name: "core" });
   await user.click(trigger);
   expect(trigger).toHaveAttribute("aria-expanded", "true");
+  await screen.findByText("I am Ada.");
 
   owner.clear();
 
@@ -345,6 +353,7 @@ it("holds one revocable memory view until the panel unmounts", async () => {
     entries: [entry("core", "I am Ada.")],
     partial: false,
   }));
+  await openCore();
   await screen.findByText("I am Ada.");
   // The panel retains one of the session's four views while it retains text.
   const views = Array.from({ length: 3 }, () => memories.open(pubkey));
@@ -382,6 +391,7 @@ it("retries a partial listing while retaining its memories until recovery", asyn
     .mockReturnValueOnce(pending);
   setup(read);
   await screen.findByText("Some memories couldn't be shown.");
+  await openCore();
   const retry = screen.getByRole("button", { name: "Retry loading memories" });
   await user.click(retry);
   expect(retry).toHaveAttribute("aria-disabled", "true");

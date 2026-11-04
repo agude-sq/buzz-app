@@ -241,6 +241,12 @@ export class GooseRuntime {
       .list()
       .map(([key, { at, sessions = [] }]) => ({ key, at, sessions }));
   }
+  /** The community's current name and kind for a channel, if it lists it. */
+  channelLabel(agent: AgentKey, channelId: string) {
+    return ownerReads(this.relay(agent), pubkeyOf(agent))?.channelLabel(
+      channelId,
+    );
+  }
   subscribe(listener: () => void) {
     this.listeners.add(listener);
     return () => {

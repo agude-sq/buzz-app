@@ -123,6 +123,8 @@ type Row = Readonly<{
   at?: number;
   /** The goose sessions saved for its place. */
   sessions?: readonly string[];
+  /** Its channel's name, when the community lists it. */
+  name?: string;
 }>;
 const placeOf = (key: string): Place => {
   const [channelId = key, root] = key.split("/");
@@ -735,7 +737,9 @@ export function createTabs({
     // Searching goose's history takes seconds, so only on request.
     const [search, setSearch] = useState(false);
     // A turn ending rereads, so its last steps show without a Refresh.
-    // biome-ignore lint/correctness/useExhaustiveDependencies: attempt is the explicit Refresh.
+    // Read again when the conversation saves or opens another session.
+    const ids = [row.sessionId, ...(row.sessions ?? [])].join(" ");
+    // biome-ignore lint/correctness/useExhaustiveDependencies: row is read by its key and ids; attempt is the explicit Refresh.
     useEffect(() => {
       const abort = new AbortController();
       setLoading(true);
@@ -771,7 +775,7 @@ export function createTabs({
           setLoading(false);
         });
       return () => abort.abort();
-    }, [row, workspace, working, attempt, search]);
+    }, [row.key, ids, workspace, working, attempt, search]);
     return (
       <div className="grid gap-4">
         <div>
@@ -791,9 +795,11 @@ export function createTabs({
         ) : read.status === "missing" && row.channelId && !search ? (
           <div className="grid gap-2">
             <p className="m-0 text-body-sm text-subtle">
-              Buzz saved no goose session for this conversation. One from an
-              earlier version of Buzz can be found by searching goose's history,
-              which can take a while.
+              {row.sessions?.length
+                ? "goose no longer has the sessions Buzz saved for this conversation."
+                : "Buzz saved no goose session for this conversation."}{" "}
+              One from an earlier version of Buzz can be found by searching
+              goose's history, which can take a while.
             </p>
             <div>
               <Button
@@ -853,40 +859,63 @@ export function createTabs({
       (listener) => runtime.subscribe(listener),
       () => runtime.sessions(agent.key),
     );
-    // Each conversation's saved sessions, read by id: no search of goose.
-    const saved = runtime.conversations(agent.key).map(
-      ({ key, at, sessions }): Row => ({
-        key,
-        sessionId: sessions[0] ?? "",
-        title: "",
-        ...placeOf(key),
-        at,
-        sessions,
-      }),
+    // Each conversation's sessions, saved or still running, read by id: no
+    // search of goose.
+    const saved = new Map(
+      runtime
+        .conversations(agent.key)
+        .map(({ key, at, sessions }) => [key, { at, sessions }]),
     );
-    const running = live.map(
-      (session): Row => ({
-        key: session.key,
-        sessionId: session.sessionId ?? "",
-        title: "",
-        ...placeOf(session.key),
-        sessions: saved.find((row) => row.key === session.key)?.sessions ?? [],
-      }),
-    );
+    for (const session of live)
+      if (session.sessionId && !saved.has(session.key))
+        saved.set(session.key, { at: session.at ?? Date.now(), sessions: [] });
+    const conversations = [...saved]
+      .sort(([, a], [, b]) => b.at - a.at)
+      .map(([key, { at, sessions }]): Row => {
+        const id = live.find((session) => session.key === key)?.sessionId;
+        const ids = [...new Set([...(id ? [id] : []), ...sessions])];
+        const place = placeOf(key);
+        return {
+          key,
+          sessionId: ids[0] ?? "",
+          title: "",
+          ...place,
+          at,
+          sessions: ids,
+          ...runtime.channelLabel(agent.key, place.channelId),
+        };
+      });
+    // Sessions of no conversation, such as a watch's or timer's turn: their
+    // ids are kept with what each session started with.
+    const known = new Set(conversations.flatMap((row) => row.sessions ?? []));
+    const standalone = runtime
+      .prompts(agent.key)
+      .ids()
+      .filter((id) => !known.has(id))
+      .reverse()
+      .map((id): Row => ({ key: id, sessionId: id, title: "", channelId: "" }));
     const {
       session: here,
       searching,
       error: lookupError,
     } = useOpenedSession(
-      [...running.filter((row) => row.sessionId), ...saved],
+      conversations.filter((row) => row.sessionId),
       conversation,
-      // Not saved: its transcript offers to search goose's history.
-      async (place) => ({
-        key: place.root ? `${place.channelId}/${place.root}` : place.channelId,
-        sessionId: "",
-        title: "",
-        ...place,
-      }),
+      // Not saved: its transcript offers to search goose's history. A
+      // thread's channel is tried first, for an agent that keeps one session
+      // per channel.
+      async (place) =>
+        place.root && conversations.some((row) => row.key === place.channelId)
+          ? undefined
+          : {
+              key: place.root
+                ? `${place.channelId}/${place.root}`
+                : place.channelId,
+              sessionId: "",
+              title: "",
+              ...place,
+              ...runtime.channelLabel(agent.key, place.channelId),
+            },
     );
     const busy = (sessionId: string) =>
       live.find((session) => session.sessionId === sessionId)?.busy;
@@ -897,16 +926,23 @@ export function createTabs({
     const label = (row: Row) =>
       row.title
         ? titled(agent.name, row.title)
-        : `${row.channelId.slice(0, 8)} · ${row.root ? `thread ${row.root.slice(0, 8)}` : "channel"}`;
+        : row.channelId
+          ? `${row.name || row.channelId.slice(0, 8)} · ${row.root ? `thread ${row.root.slice(0, 8)}` : "channel"}`
+          : `Session ${row.sessionId.slice(0, 8)}`;
     const { open, show, back } = useOpenTranscript(
       conversation,
       label,
       initialTranscript && { initial: here, searching, ...initialTranscript },
       close,
     );
-    const rows = saved
+    const rows = [...conversations, ...standalone]
       .filter((row) => row.key !== here?.key)
       .slice(0, RECENT_LIMIT);
+    // The open transcript follows its conversation's current sessions.
+    const shown =
+      open &&
+      ([...conversations, ...standalone].find((row) => row.key === open.key) ??
+        open);
     return (
       <div className={activityStyles.activity}>
         {conversation && (
@@ -926,7 +962,7 @@ export function createTabs({
             <SettingsGroup layout="form">
               <ul className={activityStyles.list}>
                 {rows.map((row) => (
-                  <li key={row.sessionId} className={activityStyles.entry}>
+                  <li key={row.key} className={activityStyles.entry}>
                     <div className={activityStyles.row}>
                       <span className={activityStyles.copy}>
                         <span
@@ -967,17 +1003,17 @@ export function createTabs({
             </p>
           )}
         </section>
-        {open && (
+        {shown && (
           <PanelSubview
-            title={label(open)}
+            title={label(shown)}
             backLabel="Back to profile"
             onBack={back}
           >
             <TranscriptView
-              key={open.key}
+              key={shown.key}
               agent={agent}
-              row={open}
-              working={busy(open.sessionId) ? open.sessionId : undefined}
+              row={shown}
+              working={busy(shown.sessionId) ? shown.sessionId : undefined}
               openConversation={openConversation}
             />
           </PanelSubview>

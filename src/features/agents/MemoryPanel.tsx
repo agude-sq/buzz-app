@@ -279,10 +279,6 @@ function MemoryAccordion({ entry }: { entry: MemoryEntry }) {
       <ContextMenuTrigger render={<div />}>
         <Accordion
           variant="settings"
-          // Only core, the one memory in every session, renders its body
-          // while closed: an agent's other memories can be many, and each
-          // body is parsed as Markdown when it renders.
-          keepMounted={entry.slug === "core"}
           items={[
             {
               value: entry.slug,
