@@ -592,7 +592,6 @@ confirmedPresence(
         "Software updates",
         "Manage plugins",
         "Builderlab",
-        "GitHub comment authors",
       ]) {
         await tab();
         await expect(

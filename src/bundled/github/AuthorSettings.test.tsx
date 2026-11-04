@@ -13,7 +13,7 @@ afterEach(() => {
 
 it("shows the default rules, and saves only rules that parse", async () => {
   const user = userEvent.setup();
-  render(<AuthorSettings active={() => true} />);
+  render(<AuthorSettings />);
   expect(screen.getByRole("status")).toHaveTextContent(
     "Comments from anyone no rule denies can wake your agents.",
   );
@@ -65,7 +65,7 @@ it("shows saved rules that no longer parse, with why, until they are fixed", asy
     POLICY_KEY,
     JSON.stringify({ version: 2, text, fallback: "deny" }),
   );
-  render(<AuthorSettings active={() => true} />);
+  render(<AuthorSettings />);
   const rules = screen.getByRole("textbox", { name: /Rules/ });
   expect(rules).toHaveValue(text);
   expect(rules).toBeInvalid();

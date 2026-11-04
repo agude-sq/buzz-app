@@ -1,11 +1,16 @@
 // @vitest-environment jsdom
+import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it } from "vitest";
 import { GitPullRequestIcon } from "../../shared/design-system/icons";
 import { presentPull } from "./attention";
+import { DEFAULT_RULES } from "./authors";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  localStorage.clear();
+});
 
 const watch = (pr: unknown) => ({
   type: "source" as const,
@@ -15,9 +20,9 @@ const watch = (pr: unknown) => ({
   config: { pr },
 });
 
-it("names the pull request and opens whose feedback wakes agents", async () => {
-  const open = vi.fn();
-  const shown = presentPull({ open })(
+it("names the pull request and edits whose feedback wakes agents in place", async () => {
+  const user = userEvent.setup();
+  const shown = presentPull(
     watch("https://github.com/block/buzz-app/pull/1578"),
     "buzz-app#1578 Release checks",
   );
@@ -33,18 +38,23 @@ it("names the pull request and opens whose feedback wakes agents", async () => {
   });
   const Details = shown.details as NonNullable<typeof shown.details>;
   render(<Details />);
-  await userEvent.click(
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  await user.click(
     screen.getByRole("button", { name: "Choose who can wake agents" }),
   );
-  expect(open).toHaveBeenCalledWith({
-    version: 1,
-    kind: "settings",
-    section: "buzz.github/authors",
+  const authors = await screen.findByRole("dialog", {
+    name: "GitHub comment authors",
   });
+  expect(authors).toHaveAccessibleDescription(
+    "Agents watching a pull request are woken by CI, and by the comments and reviews these rules allow.",
+  );
+  expect(screen.getByRole("textbox", { name: /Rules/ })).toHaveValue(
+    DEFAULT_RULES,
+  );
 });
 
 it("leaves a watch without a pull request URL to its name", () => {
-  expect(presentPull({ open: vi.fn() })(watch(42), "Release")).toEqual({
+  expect(presentPull(watch(42), "Release")).toEqual({
     type: "GitHub PR",
     icon: GitPullRequestIcon,
   });

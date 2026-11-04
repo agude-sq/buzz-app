@@ -990,10 +990,10 @@ describe("github_watch_pr", () => {
     app.dispose();
   });
 
-  it("tells a running watch what rules saved in Settings allow", async () => {
+  it("tells a running watch what newly saved rules allow", async () => {
     const app = setup();
     await app.call({ url });
-    render(createElement(AuthorSettings, { active: () => true }));
+    render(createElement(AuthorSettings));
     const save = (rules: string) => {
       fireEvent.change(screen.getByRole("textbox", { name: /Rules/ }), {
         target: { value: rules },

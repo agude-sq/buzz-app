@@ -16,7 +16,6 @@ import {
   GitHubIssueIcon,
   GitCommitIcon,
   FolderSimpleIcon,
-  GithubLogoIcon,
 } from "../../shared/design-system/icons/index";
 import type { PluginModule } from "../../plugins/api";
 import type { PanelProps } from "../../features/panels/service";
@@ -50,7 +49,6 @@ import {
 import { watchPulls } from "./watcher";
 import { presentPull } from "./attention";
 import { SubmitReview } from "./SubmitReview";
-import { AuthorSettings } from "./AuthorSettings";
 
 /** How often an open pull request panel reads GitHub again. */
 export const REFRESH_MS = PANEL_REFRESH_MS;
@@ -194,19 +192,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
   });
   addPullStateTool(ctx.agents, states);
   // Agents can watch pull requests where the app runs them.
-  ctx.inject(["agents", "host", "navigation"], (scope) =>
-    watchPulls(scope, states, gh, presentPull(scope.navigation)),
+  ctx.inject(["agents", "host"], (scope) =>
+    watchPulls(scope, states, gh, presentPull),
   );
-  // Whose comments and reviews wake them.
-  ctx.inject(["settingsCards"], (scope) => {
-    scope.settingsCards.register({
-      id: "authors",
-      title: "GitHub comment authors",
-      group: "Plugins",
-      icon: GithubLogoIcon,
-      component: ({ active }) => <AuthorSettings active={active} />,
-    });
-  });
 };
 /** A repository, issue or commit, read when the panel opens. */
 function useGitHubObject(

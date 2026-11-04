@@ -140,7 +140,6 @@ const connection = {
 let saveGate: Promise<void> | undefined;
 const controls = {
   saveStarted: false,
-  opened: undefined as unknown,
   releaseSave: () => {},
   holdSave() {
     controls.saveStarted = false;
@@ -155,12 +154,8 @@ declare global {
   }
 }
 window.attentionFixture = controls;
-const navigation = {
-  open: async (target: unknown) => {
-    controls.opened = target;
-  },
-};
-const presentGitHub = presentPull(navigation);
+const navigation = { open: async () => {} };
+const presentGitHub = presentPull;
 const Tab = createTab({
   agents: {
     presentWatch: (

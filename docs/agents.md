@@ -235,9 +235,10 @@ and the owner's other comments wake the agent. A watch is saved in Attention on 
 pull request merges or closes, after 20 wakes, after 30 minutes without a
 successful read, or when the agent calls it with `stop: true`.
 
-Settings → Plugins → GitHub comment authors decides whose feedback wakes agents,
-since anyone can comment on a public pull request. It holds rules, one per
-line, saved on the device. Each starts with `allow` or `deny`, followed by any
+GitHub comment authors rules decide whose feedback wakes agents, since anyone
+can comment on a public pull request. Choose who can wake agents, in a GitHub PR
+watch's details in Agent Attention, opens them. They are saved on the device,
+one per line. Each starts with `allow` or `deny`, followed by any
 of these conditions, all of which must hold:
 
 - `author:login`, an exact login, or `author:@me`, the signed-in `gh` account.
