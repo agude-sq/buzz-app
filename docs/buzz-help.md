@@ -346,3 +346,11 @@ Release builds ignore this optional helper.
 ### Builderlab in development
 
 With the pinned-viewer development server, Settings → Plugins → Builderlab manages one sign-in for hosted communities, remote agents and apps. It survives app reloads while the server runs. Signing out or session expiry signs all three out. The credential stays on the server and is not saved to disk.
+
+### Saved External apps approval
+
+External apps can request approval that lasts for 30 days. Buzz shows this
+lifetime before you authorize access. The app can restore the same access after
+Buzz or the app restarts. Keep Buzz open in the approved community. Keys stay
+in Buzz. Use **Settings > External apps > Revoke access** to remove approval,
+even when no session is connected. Added access requires new approval.

@@ -7,9 +7,11 @@ const CODE_LIFETIME: Duration = Duration::from_secs(60);
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Authorization {
-    callback: String,
-    state: String,
-    code_challenge: String,
+    pub(super) callback: String,
+    pub(super) state: String,
+    pub(super) code_challenge: String,
+    pub(super) approval: Option<super::pairing::Approval>,
+    pub(super) resume: Option<super::pairing::Resume>,
 }
 pub(super) struct Exchange {
     code: String,
@@ -23,7 +25,7 @@ fn opaque(value: &str) -> bool {
         .decode(value)
         .is_ok_and(|bytes| bytes.len() == 32 && URL_SAFE_NO_PAD.encode(bytes) == value)
 }
-fn callback(request: &Authorization) -> Result<reqwest::Url, String> {
+pub(super) fn callback(request: &Authorization) -> Result<reqwest::Url, String> {
     let url =
         reqwest::Url::parse(&request.callback).map_err(|_| "Invalid authorization callback")?;
     if url.scheme() != "http"
@@ -44,7 +46,8 @@ fn callback(request: &Authorization) -> Result<reqwest::Url, String> {
 }
 
 #[tauri::command]
-pub(crate) async fn plugin_host_mcp_authorize(
+pub(crate) async fn plugin_host_mcp_authorize<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     manager: tauri::State<'_, PluginManager>,
     servers: tauri::State<'_, HostMcpServers>,
     id: String,
@@ -52,6 +55,7 @@ pub(crate) async fn plugin_host_mcp_authorize(
     handle: Option<u64>,
     request: Authorization,
 ) -> Result<(), String> {
+    let expected_revision = super::pairing::revision();
     let plugin = id.clone();
     let granted = with_manager(manager, move |manager| {
         Ok(manager.host_grants(&id, &revision)?.mcp)
@@ -63,10 +67,28 @@ pub(crate) async fn plugin_host_mcp_authorize(
     let shared = handle
         .map(|handle| servers.owned(&plugin, handle))
         .transpose()?;
-    authorize(shared, request).await
+    callback(&request)?;
+    if (request.approval.is_some() || request.resume.is_some()) && plugin != "buzz.agents" {
+        return Err("Only Agents can manage external approval".into());
+    }
+    let pairing = if shared.is_some() {
+        super::pairing::authorize(&app, &request, expected_revision)?
+    } else {
+        None
+    };
+    authorize_with_pairing(shared, request, pairing).await
 }
 
+#[cfg(test)]
 async fn authorize(shared: Option<Arc<Shared>>, request: Authorization) -> Result<(), String> {
+    authorize_with_pairing(shared, request, None).await
+}
+
+async fn authorize_with_pairing(
+    shared: Option<Arc<Shared>>,
+    request: Authorization,
+    pairing: Option<super::pairing::Grant>,
+) -> Result<(), String> {
     let url = callback(&request)?;
     let deadline = tokio::time::Instant::now() + CODE_LIFETIME;
     let body = if let Some(shared) = &shared {
@@ -86,6 +108,15 @@ async fn authorize(shared: Option<Arc<Shared>>, request: Authorization) -> Resul
         if exchange.is_some() {
             return Err("Authorization already started".into());
         }
+        let endpoint = format!("http://{}/authorize/exchange", shared.authority);
+        let proof = pairing
+            .as_ref()
+            .map(|grant| grant.response_proof(&request, &code, &endpoint))
+            .transpose()?;
+        *shared
+            .pairing
+            .lock()
+            .map_err(|_| "Pairing state unavailable")? = pairing;
         *exchange = Some(Exchange {
             code: code.clone(),
             state: request.state.clone(),
@@ -93,8 +124,12 @@ async fn authorize(shared: Option<Arc<Shared>>, request: Authorization) -> Resul
             expires: Instant::now() + CODE_LIFETIME,
             consumed: false,
         });
-        serde_json::json!({ "version": 1, "state": request.state, "outcome": "authorized", "code": code,
-            "exchange_url": format!("http://{}/authorize/exchange", shared.authority) })
+        let mut body = serde_json::json!({ "version": 1, "state": request.state, "outcome": "authorized", "code": code,
+            "exchange_url": endpoint });
+        if request.resume.is_some() {
+            body["proof"] = proof.into();
+        }
+        body
     } else {
         serde_json::json!({ "version": 1, "state": request.state, "outcome": "denied" })
     };
@@ -154,8 +189,21 @@ fn redeem(shared: &Shared, input: Redemption) -> Option<String> {
     {
         return None;
     }
+    if shared
+        .pairing
+        .lock()
+        .ok()?
+        .as_ref()
+        .is_some_and(|grant| grant.active().is_err())
+    {
+        return None;
+    }
     exchange.consumed = true;
-    Some(serde_json::json!({"version": 1, "url": format!("http://{}/mcp", shared.authority), "token": shared.token}).to_string())
+    let mut descriptor = serde_json::json!({"version": 1, "url": format!("http://{}/mcp", shared.authority), "token": shared.token});
+    if let Some(pairing) = shared.pairing.lock().ok()?.as_ref() {
+        descriptor["pairing"] = pairing.descriptor();
+    }
+    Some(descriptor.to_string())
 }
 
 pub(super) async fn exchange(shared: &Shared, request: Request<Incoming>) -> Response<Full<Bytes>> {
@@ -243,6 +291,8 @@ mod tests {
             callback: callback.into(),
             state: "A".repeat(43),
             code_challenge: CHALLENGE.into(),
+            approval: None,
+            resume: None,
         }
     }
     #[test]

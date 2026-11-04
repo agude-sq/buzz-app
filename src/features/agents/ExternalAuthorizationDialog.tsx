@@ -140,6 +140,8 @@ function ConsentDialog({
               )
               .join("; ")}
             . Keys stay in Buzz.
+            {request.version === 2 &&
+              " Approval lasts for 30 days. The app can restore this access after either app restarts. You can revoke it in External apps."}
           </p>
           {children}
           {!state.available && (

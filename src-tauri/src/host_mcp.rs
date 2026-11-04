@@ -49,6 +49,8 @@ use tokio::sync::{oneshot, Semaphore};
 use tokio_util::sync::CancellationToken;
 mod authorization;
 pub(crate) use authorization::plugin_host_mcp_authorize;
+mod pairing;
+pub(crate) use pairing::plugin_host_mcp_pairing;
 
 /// Servers running at once across all plugins.
 const MAX_SERVERS: usize = 64;
@@ -97,6 +99,7 @@ struct Shared {
     /// Explicitly let clients holding the token join the same session.
     shared_session: bool,
     authorization: Mutex<Option<authorization::Exchange>>,
+    pairing: Mutex<Option<pairing::Grant>>,
     events: Channel<McpEvent>,
     stop: CancellationToken,
     pending: Mutex<Pending>,
@@ -177,6 +180,7 @@ impl HostMcpServers {
             claim: AtomicU8::new(UNCLAIMED),
             shared_session,
             authorization: Mutex::new(None),
+            pairing: Mutex::new(None),
             events,
             stop: CancellationToken::new(),
             pending: Mutex::default(),
@@ -349,11 +353,7 @@ async fn forward(shared: &Shared, body: String) -> (StatusCode, Option<String>) 
         request
     };
     let _waiting = Waiting(shared, request);
-    if shared
-        .events
-        .send(McpEvent::Message { request, body })
-        .is_err()
-    {
+    if pairing::forward(shared, McpEvent::Message { request, body }).is_err() {
         // Nobody is listening: the page that started it is gone.
         shared.stop.cancel();
         return (StatusCode::SERVICE_UNAVAILABLE, None);
