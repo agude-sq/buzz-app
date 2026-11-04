@@ -340,11 +340,10 @@ export function AgentsPage({
     (tab === "teams" ? teams.length > 0 : snapshot.agents.length > 0) ||
     snapshot.status === "error" ||
     snapshot.status === "unavailable";
-  const openImport = () => browse(undefined, () => setFlow("import"));
-  const openMarketplace = () => {
-    browse();
-    changeTab("marketplace");
-  };
+  // Import is a dialog over the page, so an open agent and its draft stay.
+  const openImport = () => setFlow("import");
+  const openMarketplace = () =>
+    browse(undefined, () => changeTab("marketplace"));
   // Shown only beside the tabs; with no agents yet, the tiles stand in for it.
   const newAgentMenu = (
     <MenuRoot onOpenChange={refreshOnOpen}>
@@ -477,6 +476,7 @@ export function AgentsPage({
       onSelect: browse,
       onBuild: build,
       onRemoved: removed,
+      busy: unsaved.saving,
       newAgent: !toolbarAction && starts,
       // A published agent's toast opens it where everyone else finds it.
       onViewListing: (agent: SharedAgent) => {
@@ -514,6 +514,7 @@ export function AgentsPage({
         type={typeOf(selected)}
         channels={channels}
         onClose={() => browse()}
+        onRemoved={() => removed(selected.pubkey)}
         openSettings={openSettings}
       />
     ) : (
@@ -663,11 +664,13 @@ export function AgentsPage({
                           });
                           document.getElementById("agents-yours-tab")?.focus();
                         }}
-                        onOpen={(agent) => {
-                          setSharedSelection(undefined);
-                          returnToAgents();
-                          browse(agent.pubkey);
-                        }}
+                        // Stays on the listing if an unsaved draft is kept.
+                        onOpen={(agent) =>
+                          browse(agent.pubkey, () => {
+                            setSharedSelection(undefined);
+                            returnToAgents();
+                          })
+                        }
                       />
                     ),
                   },
@@ -771,9 +774,13 @@ type InventoryProps = {
   agents: readonly Agent[];
   selected: string | undefined;
   typeOf(agent: Agent): RegisteredAgentType | undefined;
-  onSelect(pubkey?: string): void;
+  /** False while the current agent stays selected; then runs once another
+   * is, which may wait on a discard prompt. */
+  onSelect(pubkey?: string, then?: () => void): boolean;
   onBuild(pubkey: string): void;
   onRemoved(pubkey: string): void;
+  /** A save is pending, so choosing another agent waits for it. */
+  busy?: boolean | undefined;
   newAgent: ReactNode;
   /** The agent explicitly saved as this community's Bestie. */
   bestie?: string | undefined;
@@ -879,6 +886,7 @@ function Inventory({
   onSelect,
   onBuild,
   onRemoved,
+  busy,
   newAgent,
   bestie,
   defaultChoices,
@@ -925,10 +933,12 @@ function Inventory({
     }
     if (next === undefined) return;
     event.preventDefault();
-    onSelect(agents[next]?.pubkey);
-    grid.current
-      ?.querySelectorAll<HTMLElement>('[role="gridcell"]')
-      [next]?.focus();
+    // Focus follows the selection, including after a discard is confirmed.
+    onSelect(agents[next]?.pubkey, () =>
+      grid.current
+        ?.querySelectorAll<HTMLElement>('[role="gridcell"]')
+        [next]?.focus(),
+    );
   };
   return (
     <div ref={grid} className={cardStyles.grid}>
@@ -938,6 +948,7 @@ function Inventory({
         <div
           role="grid"
           aria-label="Agents"
+          aria-busy={busy || undefined}
           className="contents"
           onKeyDown={onKeyDown}
         >
@@ -1198,6 +1209,7 @@ function AgentPeek({
   type,
   channels,
   onClose,
+  onRemoved,
   openSettings,
 }: {
   agents: Agents;
@@ -1205,6 +1217,7 @@ function AgentPeek({
   type: RegisteredAgentType | undefined;
   channels: readonly ChannelChoice[];
   onClose(): void;
+  onRemoved(): void;
   openSettings: ((section: string) => void) | undefined;
 }) {
   const [finishing, setFinishing] = useState(false);
@@ -1260,7 +1273,7 @@ function AgentPeek({
               {error}
             </p>
           )}
-          <AgentDelete agents={agents} agent={agent} onRemoved={onClose} />
+          <AgentDelete agents={agents} agent={agent} onRemoved={onRemoved} />
           {agent.place === "here" && (
             <Section title="Wakes on">
               <AttentionSummary agent={agent} channels={channels} />
