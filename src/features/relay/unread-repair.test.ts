@@ -548,6 +548,77 @@ it("a full budget evicts the busiest channel's oldest ordinary evidence, never a
   );
 });
 
+it("30 remembered threads of 200 replies, repaired again and again, keep a quarter of a full budget: a quiet channel's mentions are kept and admitted, and every thread keeps its row", async () => {
+  const storage = memoryUnreadStorage();
+  // One thread a channel, each read through its replies, so the windows
+  // return nothing and only the thread reads add the threads' evidence.
+  const threads = Array.from({ length: 30 }, (_, i) => `t${i}`);
+  const h = await setup({
+    channels: ["quiet", "loud", ...threads],
+    frontiers: {
+      quiet: 1000,
+      loud: 1500,
+      ...Object.fromEntries(threads.map((id) => [id, 9000])),
+    },
+    storage,
+    sampled: false,
+  });
+  // The viewer replied in each thread before its 200 replies, each thread's
+  // newer than the thread before's, so evicting the viewer's threads oldest
+  // first would empty the older threads. The walk mark is past the viewer's
+  // replies: membership lookups find them.
+  const roots = threads.map((id, i) => event(id, peer, 1000 + i));
+  for (const [i, root] of roots.entries()) {
+    const id = threads[i] ?? "";
+    h.store.push(root, reply(id, viewer, 1600 + i, root));
+    for (let j = 0; j < 200; j++)
+      h.store.push(reply(id, peer, 2000 + 200 * i + j, root));
+  }
+  const mention = event("quiet", peer, 1100, [["p", viewer]]);
+  h.store.push(mention);
+  await remember(storage, {
+    roots: new Map(
+      roots.map((root, i): [string, ThreadMark] => [
+        `t${i}:${root.id}`,
+        { at: 1000 + i },
+      ]),
+    ),
+    walk: { since: 9000 },
+  });
+  const items = () => h.owner.capability.inbox().items;
+  const ids = () => items().flatMap((item) => item.messageIds);
+  const threadRows = () =>
+    items().filter((item) => roots.some((root) => root.id === item.rootId))
+      .length;
+  const observed = (channelId: string) =>
+    h.owner.capability.snapshot({ kind: "channel", channelId }).observedCount;
+  // Each repair admits up to 1,024 thread replies it does not hold; held
+  // ones cost it nothing, so the threads' evidence outgrows its quarter.
+  await h.owner.capability.ensure();
+  for (let repair = 2; repair <= 6; repair++) {
+    await h.owner.capability.refresh();
+    expect(ids(), `repair ${repair}`).toContain(mention.id);
+    expect(observed("quiet"), `repair ${repair}`).toBe(1);
+  }
+  // Membership lookups, which find the viewer's replies, land behind it.
+  await vi.waitFor(() => expect(threadRows()).toBe(30));
+  // A fresh mention is admitted, its window read by a refresh.
+  const fresh = event("quiet", peer, 1200, [["p", viewer]]);
+  h.store.push(fresh);
+  await h.owner.capability.refresh();
+  expect(ids()).toEqual(expect.arrayContaining([mention.id, fresh.id]));
+  expect(observed("quiet")).toBe(2);
+  // Ordinary traffic takes back the windows' three quarters, and no more:
+  // the threads, the mentions among them, keep a quarter, every thread
+  // still holding replies.
+  const live = flood("loud", 4096, 9000);
+  h.owner.accept(live);
+  expect(observed("loud")).toBe(3072);
+  expect(observed("quiet")).toBe(2);
+  expect(threadRows()).toBe(30);
+  expect(ids()).toEqual(expect.arrayContaining([mention.id, fresh.id]));
+});
+
 // A roster whose windows need a second request: the first carries the
 // viewer's authored page and 127 windows, most recently read first.
 const filler = Array.from({ length: 125 }, (_, i) => `f${i}`);

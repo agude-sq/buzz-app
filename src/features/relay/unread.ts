@@ -1860,6 +1860,14 @@ export function createUnread({
       resolving = false;
     }
   }
+  // Retained evidence holds at most EVENT_BUDGET events. A quarter of them,
+  // PARTICIPATION_BUDGET, is the viewer's threads' share: the most of their
+  // reads a repair admits, and the most of their evidence held ahead of the
+  // windows once evidence is full (see `accept`). The windows keep the rest,
+  // WINDOW_BUDGET.
+  const EVENT_BUDGET = 4096;
+  const PARTICIPATION_BUDGET = EVENT_BUDGET / 4;
+  const WINDOW_BUDGET = EVENT_BUDGET - PARTICIPATION_BUDGET;
   // Per-channel evidence: the newest content events of each member channel at
   // or after its older read mark (the explicit channel frontier or the
   // catch-up `activity:` mark, whichever is older, so unread replies between
@@ -1878,7 +1886,6 @@ export function createUnread({
   // the channel the viewer opens meanwhile. Each landed request publishes.
   const WINDOW_LIMIT = 100;
   const WINDOW_LEAST = 20;
-  const WINDOW_BUDGET = 3072;
   const WINDOW_CONCURRENCY = 2;
   const WINDOW_FLOOR_SECONDS = 7 * 24 * 60 * 60;
   // Behind the windows, the roster sample is read too: the newest
@@ -1903,12 +1910,10 @@ export function createUnread({
   // given its newest unread reply before the rest fill, with at most
   // PARTICIPATION_RESERVE slots kept from the fill for the reads still to
   // land, so a large cold set (mostly empty) does not starve the hot
-  // landing: pinned evidence must leave the channel windows at least three
-  // quarters of the retained budget.
+  // landing.
   const THREAD_LIMIT = 200;
   const HOT_THREADS = 50;
   const COLD_LIMIT = 50;
-  const PARTICIPATION_BUDGET = 1024;
   const PARTICIPATION_RESERVE = PARTICIPATION_BUDGET / 4;
   // The walk over the viewer's authored history teaches the threads they
   // replied in. A device's first repair pages back from the authored page in
@@ -2916,45 +2921,81 @@ export function createUnread({
    * exhausted budget (events, or bytes), so a busy channel's traffic pushes
    * out its own older evidence and never a quiet channel's only message,
    * whose count would otherwise become a confident zero; evidence of the
-   * viewer's threads goes last, oldest first. */
+   * viewer's threads goes last, the same way by thread, so a busy thread
+   * never empties a quiet one. Their evidence beyond PARTICIPATION_BUDGET
+   * events goes first: held replies cost a repair nothing, so the threads
+   * would otherwise outgrow their share across repairs and crowd the
+   * windows out of theirs. `count` is how many events their pools hold. */
   type Pool = { rows: RelayEvent[]; bytes: number };
-  type Pools = { unpinned: Map<string, Pool>; pinned: Pool };
-  const EVENT_BUDGET = 4096;
+  type Pools = {
+    unpinned: Map<string, Pool>;
+    pinned: Map<string, Pool>;
+    count: number;
+  };
   const BYTE_BUDGET = 8 * 1024 * 1024;
+  /** The key of `event`'s pool: its thread's for the viewer's threads, else
+   * its channel's. */
+  const poolKey = (event: RelayEvent) => {
+    const channel = channelOf(event) ?? "";
+    const thread = conversationKey(
+      channel,
+      threadReference(event)?.rootId ?? event.id,
+    );
+    return remembered?.has(thread) ? thread : channel;
+  };
+  const poolOf = (retained: Pools, event: RelayEvent) => {
+    const key = poolKey(event);
+    // A thread's key names its root as well as its channel.
+    const map = key === channelOf(event) ? retained.unpinned : retained.pinned;
+    const pool = map.get(key) ?? { rows: [], bytes: 0 };
+    map.set(key, pool);
+    return pool;
+  };
   function pools(): Pools {
-    const unpinned = new Map<string, Pool>();
-    const pinnedPool: Pool = { rows: [], bytes: 0 };
+    const retained: Pools = {
+      unpinned: new Map(),
+      pinned: new Map(),
+      count: 0,
+    };
     for (const event of events.values()) {
       const channel = contentKind(event) ? channelOf(event) : undefined;
       if (channel === undefined) continue;
-      const pool = pinned(event)
-        ? pinnedPool
-        : (unpinned.get(channel) ?? { rows: [], bytes: 0 });
+      const pool = poolOf(retained, event);
       pool.rows.push(event);
       pool.bytes += sizeOf(event);
-      if (pool !== pinnedPool) unpinned.set(channel, pool);
     }
-    pinnedPool.rows.sort(older);
-    for (const pool of unpinned.values()) pool.rows.sort(older);
-    return { unpinned, pinned: pinnedPool };
+    for (const pool of retained.unpinned.values()) pool.rows.sort(older);
+    for (const pool of retained.pinned.values()) {
+      pool.rows.sort(older);
+      retained.count += pool.rows.length;
+    }
+    return retained;
   }
-  /** The pool whose first event goes next, holding the most of `measure`. */
-  const next = ({ unpinned, pinned }: Pools, measure: keyof Pool) => {
+  /** The pool whose first event goes next: of the viewer's threads' when
+   * `over` their share, else of ordinary evidence's while any is retained,
+   * the one holding the most of `measure`. */
+  const next = (retained: Pools, measure: keyof Pool, over: boolean) => {
     const held = (pool: Pool) =>
       measure === "rows" ? pool.rows.length : pool.bytes;
-    let chosen: Pool | undefined;
-    for (const pool of unpinned.values()) {
-      const first = pool.rows[0];
-      const best = chosen?.rows[0];
-      if (
-        first &&
-        (!best ||
-          held(pool) > held(chosen as Pool) ||
-          (held(pool) === held(chosen as Pool) && older(first, best) < 0))
-      )
-        chosen = pool;
-    }
-    return chosen ?? pinned;
+    const busiest = (pools: Map<string, Pool>) => {
+      let chosen: Pool | undefined;
+      for (const pool of pools.values()) {
+        const first = pool.rows[0];
+        const best = chosen?.rows[0];
+        if (
+          first &&
+          (!best ||
+            held(pool) > held(chosen as Pool) ||
+            (held(pool) === held(chosen as Pool) && older(first, best) < 0))
+        )
+          chosen = pool;
+      }
+      return chosen;
+    };
+    const [first, then] = over
+      ? [retained.pinned, retained.unpinned]
+      : [retained.unpinned, retained.pinned];
+    return busiest(first) ?? busiest(then);
   };
   const place = (pool: Pool, event: RelayEvent) => {
     const { rows } = pool;
@@ -2970,13 +3011,13 @@ export function createUnread({
     pool.bytes += sizeOf(event);
   };
   /** Whether incoming content would be evicted before the retained `oldest`:
-   * ordinary before pinned; pinned by age; ordinary by age within the channel
-   * going next, since another channel holds no more than it. */
-  const before = (event: RelayEvent, oldest: RelayEvent) =>
+   * ordinary before pinned, unless pinned is `over` its share; otherwise by
+   * age within the channel, or thread, going next, since another holds no
+   * more than it. */
+  const before = (event: RelayEvent, oldest: RelayEvent, over: boolean) =>
     pinned(event) !== pinned(oldest)
-      ? !pinned(event)
-      : (pinned(event) || channelOf(event) === channelOf(oldest)) &&
-        older(event, oldest) < 0;
+      ? !pinned(event) && !over
+      : poolKey(event) === poolKey(oldest) && older(event, oldest) < 0;
   function accept(batch: readonly RelayEvent[]) {
     if (closed) return false;
     retract(batch);
@@ -3021,18 +3062,31 @@ export function createUnread({
       let admitted = true;
       while (events.size >= EVENT_BUDGET || bytes + size > BYTE_BUDGET) {
         retained ??= pools();
+        // The viewer's threads are over their share of a full event budget
+        // when they would hold more than PARTICIPATION_BUDGET events with
+        // this one.
+        const over =
+          events.size >= EVENT_BUDGET &&
+          retained.count + Number(contentKind(event) && pinned(event)) >
+            PARTICIPATION_BUDGET;
         const pool = next(
           retained,
           events.size >= EVENT_BUDGET ? "rows" : "bytes",
+          over,
         );
-        const oldest = pool.rows[0];
-        if (!oldest || (!events.has(subject.id) && before(subject, oldest))) {
+        const oldest = pool?.rows[0];
+        if (
+          !pool ||
+          !oldest ||
+          (!events.has(subject.id) && before(subject, oldest, over))
+        ) {
           admitted = false;
           for (const channel of channels) unsettled.add(channel);
           break;
         }
         pool.rows.shift();
         pool.bytes -= sizeOf(oldest);
+        if (pinned(oldest)) retained.count--;
         events.delete(oldest.id);
         bytes -= sizeOf(oldest);
         evicted = true;
@@ -3053,12 +3107,8 @@ export function createUnread({
       const channel =
         retained && contentKind(event) ? channelOf(event) : undefined;
       if (retained && channel !== undefined) {
-        if (pinned(event)) place(retained.pinned, event);
-        else {
-          const pool = retained.unpinned.get(channel) ?? { rows: [], bytes: 0 };
-          place(pool, event);
-          retained.unpinned.set(channel, pool);
-        }
+        place(poolOf(retained, event), event);
+        if (pinned(event)) retained.count++;
       }
       for (const channel of channels) {
         known.add(channel);
@@ -3072,7 +3122,9 @@ export function createUnread({
     for (const channel of unsettled)
       if (
         !retained?.unpinned.get(channel)?.rows.length &&
-        !retained?.pinned.rows.some((event) => channelOf(event) === channel) &&
+        ![...(retained?.pinned.values() ?? [])].some(
+          ({ rows: [first] }) => first && channelOf(first) === channel,
+        ) &&
         known.delete(channel)
       )
         changed.add(channel);

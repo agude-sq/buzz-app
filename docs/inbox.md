@@ -189,8 +189,11 @@ of a thread they were mentioned or answered in, hands that thread to the
 running repair, which reads it ahead of the remaining windows; after the
 repair it is read in the background and remembered at once, so it stays in
 the Inbox without a refresh. When the budget is full, the oldest evidence
-outside those threads goes first; the observation completes rather than
-resetting. Roots fetched only to group replies are bounded too, and those of
+outside those threads goes first while they hold at most a quarter of it,
+1,024 events; beyond that, the oldest of the thread holding the most goes
+first, so replies kept from earlier repairs cannot crowd out channel evidence
+and a busy thread cannot empty a quiet one. The observation completes rather
+than resetting. Roots fetched only to group replies are bounded too, and those of
 remembered threads go last, so their replies stay grouped. A lazy addressed
 query returns up to 50 kind-9/40002 messages. For those exact IDs and
 unresolved failed targets, general `#e` queries page signed kind-40003 edits

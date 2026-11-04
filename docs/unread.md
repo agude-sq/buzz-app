@@ -93,9 +93,12 @@ timeline and the thread being read, without reading unopened threads' replies.
 - `coverage` and `freshness` describe message evidence, separately from `sync()`.
   Evidence is capped at 4,096 events / 8 MiB; once it is full, the busiest
   channel's oldest ordinary evidence goes first, and a channel left with none is
-  unknown rather than zero. A repair reads each joined channel's recent window on
-  its own, the newest events of up to 128 channels at a time, and the threads the
-  viewer took part in; earlier results publish progressively and survive a later
+  unknown rather than zero. The remembered threads' evidence goes last while it
+  holds at most a quarter of the events; beyond that, the busiest thread's
+  oldest goes first, so channels keep three quarters across repairs. A repair
+  reads each joined channel's recent window on its own, the newest events of up
+  to 128 channels at a time, and the threads the viewer took part in; earlier
+  results publish progressively and survive a later
   transport failure. See [Inbox: ownership and limits](inbox.md#ownership-and-limits)
   for what it reads. Missing thread roots can affect inherited markers.
   Repair evidence does not seed channel windows, alter cursors, or mark messages read.
