@@ -141,7 +141,11 @@ import { useCompletionEditor } from "../conversation/useCompletionEditor";
 import { formatMediaTime, mediaTimeReply } from "./media-timecode";
 import { RichComposerInput } from "./RichComposerInput";
 import type { MessageLinkOrigin } from "./MessageRow";
-import { pastedFiles } from "./composer-clipboard";
+import {
+  fetchPastedImages,
+  pastedFiles,
+  pastedInlineImages,
+} from "./composer-clipboard";
 import { composerMarkdown } from "./composer-markdown";
 import type {
   ComposerInputElement,
@@ -1204,6 +1208,11 @@ function Composer({
       );
     }
   }
+  // Pictures read after their paste attach to the composer as it is then,
+  // never once it unmounts.
+  const attachLate = useEffectEvent((files: readonly File[]) => {
+    if (live.current) attachFiles(files);
+  });
   const outbox = session.outbox;
   const emojiCatalog = useSyncExternalStore(
     session.emoji.subscribe,
@@ -3022,7 +3031,12 @@ function Composer({
         }}
         onPasteCapture={(event) => {
           const files = pastedFiles(event.clipboardData);
-          if (!files.length) return;
+          if (!files.length) {
+            // The editor pastes the text; pictures only in its HTML follow.
+            const images = pastedInlineImages(event.clipboardData);
+            if (images.length) void fetchPastedImages(images).then(attachLate);
+            return;
+          }
           event.preventDefault();
           event.stopPropagation();
           attachFiles(files);
