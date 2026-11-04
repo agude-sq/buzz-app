@@ -1193,6 +1193,7 @@ it("keeps saved conversations per agent in storage, most recent first", () => {
         legacy: { at: 4 },
         list: { at: 6, sessions: { 0: "s" } },
         infinite: { at: null },
+        far: { at: -1e20 },
         empty: null,
       },
       two: "damaged",

@@ -9,6 +9,7 @@ import {
   type TranscriptItem,
   type TranscriptTurn,
 } from "./activity-transcript";
+import { validTime } from "../agent-harness/acp/agent-sessions";
 import type { AgentKey } from "./membership";
 import type { AgentStore } from "./store";
 
@@ -77,8 +78,7 @@ function storedSession(value: unknown): Stored["sessions"][number] | undefined {
     conversation?: unknown;
   };
   if (
-    typeof at !== "number" ||
-    !Number.isFinite(at) ||
+    !validTime(at) ||
     typeof title !== "string" ||
     !(
       conversation === undefined ||

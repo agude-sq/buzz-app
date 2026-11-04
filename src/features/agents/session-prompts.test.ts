@@ -182,6 +182,7 @@ it("drops damaged saved sessions and keeps their neighbors", () => {
         ["started", null, { at: 5, title: "Gander · #general" }],
         ["badStart", [], { at: "later", title: "x" }],
         ["badPlace", [], { at: 1, title: "x", conversation: 7 }],
+        ["far", [], { at: 1e20, title: "x", conversation: null }],
         ["timer", [], { at: 2, title: "t", conversation: null }],
         ["badParts", { 0: ["", 0] }],
         [7, []],

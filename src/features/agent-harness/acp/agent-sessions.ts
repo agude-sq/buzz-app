@@ -38,15 +38,20 @@ export type SavedConversation = Readonly<{
 /** The longest session id kept; longer ones are taken as damaged. */
 const SESSION_ID_LIMIT = 256;
 
+/** Whether a saved time is one a Date can hold: finite alone lets 1e20
+ * through, which throws when shown. */
+export const validTime = (at: unknown): at is number =>
+  typeof at === "number" && !Number.isNaN(new Date(at).getTime());
+
 /** A saved conversation as read back from storage, or undefined when it is
- * damaged: a finite time, and its session ids de-duplicated, capped and kept
+ * damaged: a time a Date can hold, and its session ids de-duplicated, capped and kept
  * only when each is a short string. One saved before ids were has none. */
 export function savedConversation(
   value: unknown,
 ): SavedConversation | undefined {
   if (!value || typeof value !== "object") return undefined;
   const { at, sessions } = value as { at?: unknown; sessions?: unknown };
-  if (typeof at !== "number" || !Number.isFinite(at)) return undefined;
+  if (!validTime(at)) return undefined;
   if (sessions === undefined) return { at };
   if (!Array.isArray(sessions)) return undefined;
   const ids = sessions.filter(
