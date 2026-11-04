@@ -214,16 +214,13 @@ test("a failed image in the viewer keeps Retry clear of the toolbar and requests
         await expect(
           stage.getByRole("button", { name: "Zoom in", exact: true }),
         ).toBeDisabled();
-        for (const name of [
-          "Copy image",
-          "Download image",
-          "Open image in browser",
-        ])
-          await expect(
-            stage
-              .getByRole("button", { name })
-              .or(stage.getByRole("link", { name })),
-          ).toHaveCount(0);
+        // Image actions keep their places, unavailable.
+        await expect(
+          stage.getByRole("button", { name: "Copy image" }),
+        ).toBeDisabled();
+        await expect(
+          stage.getByRole("link", { name: "Download image" }),
+        ).toHaveAttribute("aria-disabled", "true");
         const bounds = await visibleBox(stage);
         const toolbar = await stage
           .locator("[data-image-controls]")
@@ -248,6 +245,87 @@ test("a failed image in the viewer keeps Retry clear of the toolbar and requests
     },
     "",
     { missing },
+  );
+});
+
+test("a failed image keeps the viewer toolbar in place with its actions disabled", async ({
+  page,
+}) => {
+  await withMessagesFixture(
+    page,
+    async () => {
+      const dialog = page.getByRole("dialog", { name: "Image viewer" });
+      const stage = dialog.locator("[data-review-stage]");
+      const toolbar = stage.locator("[data-image-controls]");
+      const status = stage
+        .getByRole("status")
+        .filter({ hasText: /Couldn't load image|Loading image…/ });
+      const control = (name) =>
+        stage.getByRole("button", { name, exact: true });
+      const copy = control("Copy image");
+      const download = stage.getByRole("link", { name: "Download image" });
+      const layout = async () =>
+        Object.fromEntries(
+          await Promise.all(
+            [
+              ["toolbar", toolbar],
+              ["previous", control("Previous image")],
+              ["next", control("Next image")],
+              ["zoom", control("Zoom in")],
+              ["copy", copy],
+              ["download", download],
+            ].map(async ([name, locator]) => [
+              name,
+              await locator.boundingBox(),
+            ]),
+          ),
+        );
+      // Grid and absolute centering may differ by subpixel rounding only.
+      const expectSameLayout = (actual, expected) => {
+        for (const [name, box] of Object.entries(expected))
+          for (const [key, value] of Object.entries(box))
+            expect(
+              Math.abs(actual[name][key] - value),
+              `${name} ${key}`,
+            ).toBeLessThan(0.5);
+      };
+      await page.setViewportSize({ width: 1280, height: 800 });
+      await page
+        .getByRole("button", { name: "Review image", exact: true })
+        .click();
+      await expect(status).toHaveText("Couldn't load image");
+      await expect(copy).toBeDisabled();
+      await expect(download).toHaveAttribute("aria-disabled", "true");
+      await expect(download).not.toHaveAttribute("href");
+      await expect(control("Zoom in")).toBeDisabled();
+      const failed = await layout();
+
+      await control("Next image").click();
+      await expect(status).toHaveCount(0);
+      await expect(copy).toBeEnabled();
+      await expect(download).toHaveAttribute("href", /two\.png/);
+      await expect(control("Zoom in")).toBeEnabled();
+      expectSameLayout(await layout(), failed);
+
+      // Returning requests the failed image again. Its controls grey out at
+      // once rather than through the buttons' color transition.
+      await stage.evaluate((element) => {
+        const zoomIn = element.querySelector('[aria-label="Zoom in"]');
+        window.disabledAnimations = undefined;
+        new MutationObserver((_, observer) => {
+          if (!zoomIn.hasAttribute("data-disabled")) return;
+          window.disabledAnimations = zoomIn.getAnimations().length;
+          observer.disconnect();
+        }).observe(zoomIn, { attributes: true });
+      });
+      await control("Previous image").click();
+      await expect(status).toHaveText("Couldn't load image");
+      await expect(control("Zoom in")).toBeDisabled();
+      expect(await page.evaluate(() => window.disabledAnimations)).toBe(0);
+      expectSameLayout(await layout(), failed);
+    },
+    "",
+    { missing: (target) => target.endsWith("/one.png") },
   );
 });
 

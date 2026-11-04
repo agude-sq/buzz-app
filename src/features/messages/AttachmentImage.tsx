@@ -97,6 +97,10 @@ export function AttachmentImage({
     (element: HTMLAnchorElement) => {
       const release = corners(element);
       const forget = keepFocus(element);
+      // React leaves the click trap it set for `onClick` (Safari's
+      // trapClickOnNonInteractiveElement) after the prop goes, and Chromium
+      // exposes an anchor with a click listener as a link even without href.
+      if (failed) element.onclick = null;
       if (handoff.current) {
         handoff.current = false;
         const focused = document.activeElement;
@@ -163,11 +167,13 @@ export function AttachmentImage({
   return (
     <>
       {/* A failure keeps this frame, its preview and its request in place.
-          Without href it is no link, so its Retry is not nested in one. */}
+          Without href or a click listener it is no link, so its Retry is not
+          nested in one. */}
       <a
         ref={frame}
         className={styles.attachmentImage}
         style={style}
+        role={failed ? "none" : undefined}
         href={failed ? undefined : (source ?? attachment.url)}
         target="_blank"
         rel="noreferrer"

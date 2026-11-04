@@ -211,6 +211,36 @@ it("a failed original keeps its preview with a Retry that requests it again unti
   expect(view.getByRole("link")).toHaveAttribute("data-image-ready");
 });
 
+it("a failed frame drops the click trap and role that would expose it as a link", () => {
+  const attachment = { url: source, kind: "image" as const, dimensions };
+  const view = render(
+    <AttachmentImage attachment={attachment} source={source} />,
+  );
+  const frame = view.getByRole("link");
+  // React traps clicks on the element of any onClick (for Safari) and never
+  // removes the trap; Chromium exposes an anchor with it as a link.
+  expect(frame.onclick).toBeTypeOf("function");
+  fireEvent.error(original(view));
+  expect(frame).toHaveAttribute("role", "none");
+  expect(frame).not.toHaveAttribute("href");
+  expect(frame.onclick).toBeNull();
+
+  // A frame that mounts already failed matches one that failed later.
+  const other = render(
+    <AttachmentImage attachment={attachment} source={source} />,
+  );
+  const failed = other.container.querySelector("[data-image-failed]");
+  expect(failed).toHaveAttribute("role", "none");
+  expect((failed as HTMLAnchorElement).onclick).toBeNull();
+  other.unmount();
+
+  fireEvent.click(view.getByRole("button", { name: "Retry image" }));
+  fireEvent.load(original(view));
+  expect(view.getByRole("link")).toBe(frame);
+  expect(frame).not.toHaveAttribute("role");
+  expect(frame.onclick).toBeTypeOf("function");
+});
+
 it("a focused image that fails hands focus to its Retry", () => {
   const view = render(
     <AttachmentImage

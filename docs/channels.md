@@ -1666,9 +1666,12 @@ Without IntersectionObserver, only the ordinary placeholder/original is used.
 This favors bounded visible work over instant offscreen previews on scrolling.
 An original that fails to load keeps its frame and preview under a dark scrim
 with "Couldn't load image" and Retry. The frame element, its preview canvas and
-its image stay mounted; it only drops `href`, so it is no longer the viewer link
-and Retry is not nested in one, and the image Retry loads is the one shown, with
-no second request. A "+N" tile stays the gallery link. Failed frames grow to at
+its image stay mounted; it drops `href` and its click listener and takes
+`role="none"`, so it is no longer the viewer link and Retry is not nested in one,
+and the image Retry loads is the one shown, with no second request. (React keeps
+the click trap it sets for `onClick` after the prop goes, and Chromium exposes an
+anchor with a click listener as a link even without `href`, so the frame clears
+it while failed.) A "+N" tile stays the gallery link. Failed frames grow to at
 least 2.5rem so Retry fits, and the overlay's own size picks its layout in rem, so
 larger text steps down a layout: under 5.5rem wide or 4rem tall, a round Retry
 named and titled "Couldn't load image. Retry"; under 10rem by 6rem, icon and
@@ -1679,9 +1682,11 @@ the same way. Retry is busy until the fresh request settles and ignores repeated
 presses. Another failure returns to the error; success restores the link. Focus
 follows the frame's control: a focused link that fails hands focus to Retry, and
 a focused Retry that succeeds hands it to the link. The viewer shows the same
-recovery above its toolbar, disables zoom, and hides copy, download and open; an
-image loading for Retry shares the recovery's grid area, so Retry keeps its place
-and focus while busy. Focus a viewer failure or recovery removes or disables
+recovery above its toolbar and disables zoom, copy, download and open in place,
+so the toolbar keeps its width and a repeated Next press stays on Next; disabled
+links drop `href`. Viewer controls grey out without the buttons' color
+transition. An image loading for Retry shares the recovery's grid area, so Retry
+keeps its place and focus while busy. Focus a viewer failure or recovery removes or disables
 moves to Retry or the stage, and closing the viewer over a row that failed
 meanwhile focuses that row's Retry. Failures are shared by media source across
 mounted views, so Retry in a row or the viewer recovers both, while a view whose
@@ -1691,8 +1696,9 @@ so remounting requests the original again. Decode rejection is not a load
 failure. There is no automatic retry or cache-busting.
 `tests/browser/image-scroll.spec.mjs` covers delayed/failed loads, actual remounts,
 bottom following, reading anchors and narrow layout in Chromium and WebKit;
-`tests/browser/image-failure.spec.mjs` covers Retry's success, focus and the
-viewer's layout while it is busy.
+`tests/browser/image-failure.spec.mjs` covers Retry's success, focus, the
+viewer's layout while it is busy, and Chromium's accessibility tree for a failed
+frame.
 
 ## Opening an exact message
 

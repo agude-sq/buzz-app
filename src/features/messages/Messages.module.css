@@ -1579,6 +1579,13 @@ button.mediaPreview {
   flex-shrink: 0;
   white-space: nowrap;
 }
+/* An unavailable control greys out at once, so it never looks usable for a
+   moment after its image fails or the gallery reaches a failed image. The
+   toolbar's own children already fade only their opacity. */
+.imageReviewSwitcher > [data-disabled],
+.imageReviewZoom > [data-disabled] {
+  transition: none;
+}
 @media (hover: hover) and (pointer: fine) {
   /* Programmatic gallery focus can remain :focus-visible after a mouse click. */
   html:not([data-keyboard-navigation])

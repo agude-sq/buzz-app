@@ -142,3 +142,64 @@ test("a viewer Retry keeps focus and its place above the toolbar, and closing re
     requests.answer("fail");
   }
 });
+
+// jsdom and getByRole derive roles from ARIA in HTML, but Chromium also exposes
+// an anchor with a click listener as a link without href.
+test("a failed frame is no link around its Retry in Chromium's accessibility tree", async ({
+  page,
+  browserName,
+}) => {
+  test.skip(browserName !== "chromium", "Reads Chromium's tree over CDP.");
+  const requests = await photoRequests(page);
+  try {
+    await page.goto("/tests/fixtures/media-review.html?image-failure");
+    await expect.poll(requests.pending).toBe(1);
+    const client = await page.context().newCDPSession(page);
+    // The exposed roles above a node, or null until it is exposed. A link
+    // takes its name from its content, so it can share its button's name.
+    const ancestors = async (role, name) => {
+      const { nodes } = await client.send("Accessibility.getFullAXTree");
+      const byId = new Map(nodes.map((node) => [node.nodeId, node]));
+      const node = nodes.find(
+        (candidate) =>
+          !candidate.ignored &&
+          candidate.role?.value === role &&
+          candidate.name?.value === name,
+      );
+      if (!node) return null;
+      const roles = [];
+      for (
+        let parent = byId.get(node.parentId);
+        parent;
+        parent = byId.get(parent.parentId)
+      )
+        if (!parent.ignored) roles.push(parent.role?.value);
+      return roles;
+    };
+    await expect
+      .poll(() => ancestors("link", "Open image attachment"))
+      .not.toBeNull();
+
+    requests.answer("fail");
+    await expect
+      .poll(async () =>
+        (await ancestors("button", "Retry image"))?.includes("link"),
+      )
+      .toBe(false);
+    expect(await ancestors("link", "Retry image")).toBeNull();
+
+    requests.hold();
+    await page.getByRole("button", { name: "Retry image" }).focus();
+    await page.keyboard.press("Enter");
+    await expect.poll(requests.pending).toBe(1);
+    requests.answer("load");
+    await expect(
+      page.getByRole("link", { name: "Open image attachment" }),
+    ).toHaveAttribute("data-image-ready");
+    await expect
+      .poll(() => ancestors("link", "Open image attachment"))
+      .not.toBeNull();
+  } finally {
+    requests.answer("fail");
+  }
+});
