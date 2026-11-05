@@ -7618,21 +7618,31 @@ it("names a row verified only by this page by its full name under a full-name po
         "fak",
       ),
     );
-    render(
+    const results = (query: string) => (
       <SearchResults
         session={t.session}
-        query="fak"
+        query={query}
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
         openConversation={vi.fn()}
-      />,
+      />
     );
+    const view = render(results("fak"));
     const people = await screen.findByRole("group", { name: "People" });
     await waitFor(() =>
       expect(within(people).getByRole("option")).toHaveTextContent(
         /Fake NameStart a direct message$/,
       ),
+    );
+    // The verified handle the full name replaced still finds the row.
+    view.rerender(results("fname"));
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole("group", { name: "People" })).getByRole(
+          "option",
+        ),
+      ).toHaveTextContent(/Fake NameStart a direct message$/),
     );
     expect(owner.session.profiles.snapshot().get(fake.pubkey)?.verified).toBe(
       undefined,

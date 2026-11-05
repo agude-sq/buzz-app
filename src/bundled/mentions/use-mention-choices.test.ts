@@ -8,6 +8,7 @@ import { createAgentDirectory } from "../../features/identity-names/testing";
 import { createNameProvider } from "../../features/identity-names/directory";
 import { resolveIdentityNames } from "../../features/identity-names/policy";
 import { withFullNames } from "../identity-naming/full-names";
+import { mentionMatch } from "./mention-ranking";
 import { namedCandidates } from "./use-mention-choices";
 
 const key = (n: number) => n.toString(16).padStart(64, "0");
@@ -94,6 +95,9 @@ it.each([
       recipient: { name: "fname" },
       fullName: "Fake Name",
     });
+    // Whatever the label, the verified name still finds them.
+    if (!fake) throw new Error("no choice for the verified person");
+    expect(mentionMatch(fake, "fname")).toBeLessThan(Infinity);
     names.dispose();
   },
 );

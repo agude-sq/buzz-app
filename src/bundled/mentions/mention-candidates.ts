@@ -280,6 +280,8 @@ function buildCandidates(
               ...(agentNames.get(recipient.pubkey) ?? []),
               hosts.has(recipient.pubkey) ? recipient.name : undefined,
               fullName,
+              // The verified name a page found, which a full-name label hides.
+              verified.get(recipient.pubkey)?.name,
               ...(verified.get(recipient.pubkey)?.profileNames ?? []),
             ].filter((name): name is string => !!name),
           ),

@@ -901,6 +901,17 @@ export function SearchResults({
           ? undefined
           : found?.name) ?? source.name;
       const fullName = verifiedOf(pubkey)?.fullName;
+      // A label the naming rules replaced, such as a verified full name, still
+      // leaves the name and handle it replaced to find the row by.
+      const replaced =
+        label === source.name ? [] : [source.name, source.username];
+      const profileNames = [
+        ...new Set(
+          [...(searched.get(pubkey) ?? []), ...replaced].filter(
+            (name): name is string => !!name,
+          ),
+        ),
+      ];
       people.push({
         pubkey,
         label,
@@ -908,7 +919,7 @@ export function SearchResults({
         username: source.username !== source.name ? source.username : undefined,
         fullName: fullName !== label ? fullName : undefined,
         agentName: agentName !== source.name ? agentName : undefined,
-        profileNames: searched.get(pubkey),
+        profileNames: profileNames.length ? profileNames : undefined,
         agent,
         relationship: relationships.rank(pubkey),
         usageKeys: [personKey(pubkey), ...(dm ? [`channel:${dm}`] : [])],
