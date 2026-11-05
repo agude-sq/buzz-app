@@ -375,6 +375,60 @@ it("overlays verified names, qualifies collisions, preserves kind 0 details, and
   }
 });
 
+it("qualifies a self-declared copy of a verified full name, even without the real person in scope", async () => {
+  const { createProfileDirectory } = await import("./profile-directory");
+  const carol = keypair();
+  let sink: VerifiedProfileSink | undefined;
+  const directory = createProfileDirectory(
+    { read: async () => [] },
+    undefined,
+    undefined,
+    {
+      authority: { ...authority, multipleIssuers: false },
+      subscribe(_filter, next) {
+        sink = next;
+        return () => {};
+      },
+    },
+  );
+  try {
+    directory.accept([
+      eventDto(signed(alice, { kind: 0, tags: [], content: "{}" })),
+      eventDto(
+        signed(bob, {
+          kind: 0,
+          tags: [],
+          content: JSON.stringify({ name: "Alice Example" }),
+        }),
+      ),
+      eventDto(
+        signed(carol, {
+          kind: 0,
+          tags: [],
+          content: JSON.stringify({ name: "Carol" }),
+        }),
+      ),
+    ]);
+    await directory.ensure([alice.pubkey, bob.pubkey, carol.pubkey]);
+    assert(sink);
+    sink.event(projection(10, alice.pubkey, [["full_name", "Alice Example"]]));
+    sink.eose();
+    await tick(); // Verified changes publish on the next macrotask.
+    const name = (key: { pubkey: string }) =>
+      directory.queries.snapshot().get(key.pubkey)?.name;
+    // The directory is global, so a label resolved for bob alone (a DM)
+    // still carries the qualifier.
+    expect(name(bob)).toBe(`Alice Example (${bob.pubkey.slice(0, 10)})`);
+    expect(name(alice)).toBe("Alice");
+    expect(name(carol)).toBe("Carol");
+    sink.event(retract(20));
+    await tick(); // Verified changes publish on the next macrotask.
+    expect(name(bob)).toBe("Alice Example");
+  } finally {
+    directory.dispose();
+  }
+});
+
 it("qualifies verified namesakes and shared usernames, but not a unique verified name", async () => {
   const { createProfileDirectory } = await import("./profile-directory");
   const carol = keypair();

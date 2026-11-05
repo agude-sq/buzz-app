@@ -241,6 +241,9 @@ export function createProfileDirectory(
     // Counted once per publish: a pairwise scan is quadratic in a large roster.
     const verifiedNames = new Map<string, number>();
     const verifiedUsernames = new Map<string | undefined, number>();
+    // Labels can show a verified full name instead, so a self-declared copy
+    // of one is an imitation too, even outside the real person's scope.
+    const verifiedFullNames = new Set<string>();
     for (const [, { verified, username }] of next)
       if (verified) {
         const name = verified.displayName;
@@ -249,12 +252,14 @@ export function createProfileDirectory(
           username,
           (verifiedUsernames.get(username) ?? 0) + 1,
         );
+        if (verified.fullName) verifiedFullNames.add(verified.fullName);
       }
     for (const [id, profile] of next) {
       const own = profile.verified ? 1 : 0;
       const duplicate =
         (verifiedNames.get(profile.verified?.displayName ?? profile.name) ??
           0) > own ||
+        (!profile.verified && verifiedFullNames.has(profile.name)) ||
         (!!profile.verified &&
           (verifiedUsernames.get(profile.username) ?? 0) > own);
       if (duplicate)
