@@ -256,10 +256,13 @@ export function createProfileDirectory(
       }
     for (const [id, profile] of next) {
       const own = profile.verified ? 1 : 0;
+      // Labels trim names, so padding must not hide a copy. Verified names
+      // never have surrounding whitespace.
+      const claimed = profile.name.trim();
       const duplicate =
-        (verifiedNames.get(profile.verified?.displayName ?? profile.name) ??
-          0) > own ||
-        (!profile.verified && verifiedFullNames.has(profile.name)) ||
+        (verifiedNames.get(profile.verified?.displayName ?? claimed) ?? 0) >
+          own ||
+        (!profile.verified && verifiedFullNames.has(claimed)) ||
         (!!profile.verified &&
           (verifiedUsernames.get(profile.username) ?? 0) > own);
       if (duplicate)

@@ -421,6 +421,19 @@ it("qualifies a self-declared copy of a verified full name, even without the rea
     expect(name(bob)).toBe(`Alice Example (${bob.pubkey.slice(0, 10)})`);
     expect(name(alice)).toBe("Alice");
     expect(name(carol)).toBe("Carol");
+    // Padding is trimmed from labels, so it must not hide a copy either.
+    directory.accept([
+      eventDto(
+        signed(carol, {
+          kind: 0,
+          tags: [],
+          created_at: Math.floor(Date.now() / 1000) + 1,
+          content: JSON.stringify({ name: " Alice Example " }),
+        }),
+      ),
+    ]);
+    await tick();
+    expect(name(carol)).toContain(`(${carol.pubkey.slice(0, 10)})`);
     sink.event(retract(20));
     await tick(); // Verified changes publish on the next macrotask.
     expect(name(bob)).toBe("Alice Example");
