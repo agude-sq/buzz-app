@@ -170,6 +170,9 @@ export function verifiedName(profiles: ProfileQueries, pubkey: string) {
 export type VerifiedPerson<T> = T & {
   /** The verified full name, shown beside the row's detail. */
   fullName?: string | undefined;
+  /** The verified profile behind these names, for naming rules that use more
+   * of it than the display name. */
+  verified?: VerifiedProfile | undefined;
   /** The profile name and handle the search found them by, kept as match keys. */
   profileNames?: readonly string[] | undefined;
 };
@@ -197,6 +200,7 @@ export function withVerifiedNames<
       name: verified.displayName,
       username: verified.username,
       ...(verified.fullName ? { fullName: verified.fullName } : {}),
+      verified,
       profileNames: [person.name, person.username].filter(
         (name): name is string => !!name,
       ),

@@ -872,11 +872,14 @@ export function SearchResults({
     const candidates = eligible.map(({ pubkey }) => pubkey);
     const displayFacts = personDirectory.people.flatMap((person) => {
       const source = sources.get(person.pubkey);
+      const verified = pageVerified(person.pubkey);
       return source && source !== profiles.get(person.pubkey)
         ? [
             {
               pubkey: person.pubkey,
               name: source.name,
+              // Naming rules may use more of it than the name, as for cached profiles.
+              ...(verified ? { verified } : {}),
               ...(person.isAgent ? { isAgent: true } : {}),
               ...(person.ownerPubkey
                 ? { ownerPubkey: person.ownerPubkey }

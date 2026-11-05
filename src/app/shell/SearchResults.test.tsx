@@ -18,6 +18,9 @@ import {
   type IdentityNames,
 } from "../../features/identity-names/service";
 import { createAgentDirectory } from "../../features/identity-names/testing";
+import { createNameProvider } from "../../features/identity-names/directory";
+import { resolveIdentityNames } from "../../features/identity-names/policy";
+import { withFullNames } from "../../bundled/identity-naming/full-names";
 import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
 import { eventDto } from "../../features/relay/events";
@@ -7525,6 +7528,110 @@ it("labels a row by its verified name over a cached profile name without a namin
     await waitFor(() =>
       expect(within(people).getByRole("option")).toHaveTextContent(
         /fnameStart a direct message$/,
+      ),
+    );
+    expect(owner.session.profiles.snapshot().get(fake.pubkey)?.verified).toBe(
+      undefined,
+    );
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("names a row verified only by this page by its full name under a full-name policy", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    fake = keypair();
+  // Identity Naming's rule with Prefer verified full names on.
+  const fullNames = createNameProvider({
+    id: "human-first",
+    resolve: (identities, viewer, candidates) =>
+      resolveIdentityNames(withFullNames(identities), viewer, candidates),
+  });
+  const owner = createRelaySession(
+    {
+      ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+      verifiedProfiles: { pubkey: relay.pubkey, multipleIssuers: false },
+      async query(filters) {
+        if (filters.some((filter) => filter.kinds?.includes(0)))
+          return [
+            eventDto(
+              signed(fake, {
+                kind: 0,
+                created_at: 1_000_000,
+                content: JSON.stringify({ name: "fak" }),
+                tags: [],
+              }),
+            ),
+          ];
+        const filter = filters.find((item) => item.kinds?.includes(30382));
+        if (!filter?.["#d"]?.includes(fake.pubkey)) return [];
+        return [
+          eventDto(
+            signed(relay, {
+              kind: 30382,
+              created_at: 1_000_000,
+              content: "",
+              tags: [
+                ["d", fake.pubkey],
+                ["p", fake.pubkey],
+                ["active", "true"],
+                ["display_name", "fname"],
+                ["username", "fname"],
+                ["full_name", "Fake Name"],
+                ["issuer_label", "Block"],
+                ["verified_at", "1000000"],
+              ],
+            }),
+          ),
+        ];
+      },
+      subscribe(callbacks) {
+        callbacks.state({ status: "connected", routes: [] });
+        return {
+          update() {},
+          retry() {},
+          dispose() {},
+          syncVerifiedProfiles: () => () => {},
+        };
+      },
+    },
+    {
+      identityNames: {
+        bind: (source) =>
+          bindNames(source, {
+            snapshot: () => [fullNames],
+            subscribe: () => () => {},
+          }),
+      } as IdentityNames,
+    },
+  );
+  const t = peopleSession(owner.session, [
+    { pubkey: fake.pubkey, name: "fak" },
+  ]);
+  try {
+    // The shared profiles hold their kind-0 name but no verified name.
+    void owner.session.profiles.ensure([fake.pubkey]);
+    await waitFor(() =>
+      expect(owner.session.profiles.snapshot().get(fake.pubkey)?.name).toBe(
+        "fak",
+      ),
+    );
+    render(
+      <SearchResults
+        session={t.session}
+        query="fak"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={vi.fn()}
+      />,
+    );
+    const people = await screen.findByRole("group", { name: "People" });
+    await waitFor(() =>
+      expect(within(people).getByRole("option")).toHaveTextContent(
+        /Fake NameStart a direct message$/,
       ),
     );
     expect(owner.session.profiles.snapshot().get(fake.pubkey)?.verified).toBe(

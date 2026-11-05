@@ -166,6 +166,7 @@ it("names people by shared, then searched, verified names and keeps what found t
       name: "fname",
       username: "fname",
       fullName: "Fake Name",
+      verified: shared.get(key(1))?.verified,
       profileNames: ["Fake", "fak"],
     },
     {
@@ -173,6 +174,7 @@ it("names people by shared, then searched, verified names and keeps what found t
       name: "bname",
       username: "bname",
       fullName: "Bea Name",
+      verified: page.get(key(2)),
       profileNames: ["Bea"],
     },
     people[2],

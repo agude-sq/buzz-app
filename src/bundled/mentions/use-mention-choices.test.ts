@@ -5,16 +5,36 @@ import {
   type NameSource,
 } from "../../features/identity-names/service";
 import { createAgentDirectory } from "../../features/identity-names/testing";
+import { createNameProvider } from "../../features/identity-names/directory";
+import { resolveIdentityNames } from "../../features/identity-names/policy";
+import { withFullNames } from "../identity-naming/full-names";
 import { namedCandidates } from "./use-mention-choices";
 
 const key = (n: number) => n.toString(16).padStart(64, "0");
 
+// Identity Naming's rule with Prefer verified full names on.
+const fullNames = createNameProvider({
+  id: "human-first",
+  resolve: (identities, viewer, candidates) =>
+    resolveIdentityNames(withFullNames(identities), viewer, candidates),
+});
+const verified = {
+  displayName: "fname",
+  username: "fname",
+  fullName: "Fake Name",
+  issuerLabel: "Block",
+  verifiedAt: 1,
+  status: "checked" as const,
+  multipleIssuers: false,
+};
+
 it.each([
-  ["no naming policy", undefined],
-  ["the default naming policy", [createAgentDirectory()]],
+  ["no naming policy", undefined, "fname"],
+  ["the default naming policy", [createAgentDirectory()], "fname"],
+  ["a full-name naming policy", [fullNames], "Fake Name"],
 ])(
-  "labels a person with the verified name the mention will insert, with %s",
-  (_, policies) => {
+  "labels a person by their verified names, not the cached profile name, with %s",
+  (_, policies, label) => {
     // Their kind-0 profile is cached; the community verified them as fname.
     const profiles = new Map([[key(8), { name: "fak" }]]);
     const names = bindNames(
@@ -63,13 +83,14 @@ it.each([
           pubkey: key(8),
           name: "fname",
           fullName: "Fake Name",
+          verified,
           profileNames: ["fak"],
         },
       ],
     );
     const fake = choices.find((choice) => choice.recipient.pubkey === key(8));
     expect(fake).toMatchObject({
-      label: "fname",
+      label,
       recipient: { name: "fname" },
       fullName: "Fake Name",
     });

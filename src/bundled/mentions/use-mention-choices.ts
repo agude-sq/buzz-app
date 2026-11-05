@@ -165,11 +165,13 @@ export function namedCandidates(
       .filter(
         (person) => !known?.(person.pubkey) || pageVerified.has(person.pubkey),
       )
-      .map(({ pubkey, name, isAgent, ownerPubkey }) => ({
+      .map(({ pubkey, name, isAgent, ownerPubkey, verified }) => ({
         pubkey,
         name,
         ...(isAgent ? { isAgent } : {}),
         ...(ownerPubkey ? { ownerPubkey } : {}),
+        // Naming rules may use more of the verified profile than its name.
+        ...(verified && pageVerified.has(pubkey) ? { verified } : {}),
       })),
     ...selected,
   ];
